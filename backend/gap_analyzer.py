@@ -1,0 +1,115 @@
+"""
+Gap Analyzer: Compare JD requirements against KB to identify skill gaps.
+Uses LLM to extract skills from JD and match against KB content.
+"""
+
+from pydantic import BaseModel, Field
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+
+from backend.config import DEFAULT_GENERATION_MODEL, DEFAULT_EMBEDDING_MODEL
+from backend.retriever import retrieve_relevant_chunks
+
+
+class GapAnalysis(BaseModel):
+    """Result of JD vs KB gap analysis."""
+    matching_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    weak_areas: list[str] = Field(default_factory=list)
+    match_percentage: float = Field(default=0.0)
+    recommendations: list[str] = Field(default_factory=list)
+
+
+EXTRACT_PROMPT = """You are a skill extraction expert. Given a Job Description, extract ALL required and preferred skills, technologies, tools, and qualifications.
+
+Return ONLY a JSON object with this exact structure (no markdown, no code blocks):
+{{"required_skills": ["skill1", "skill2"], "preferred_skills": ["skill3", "skill4"]}}
+
+Job Description:
+{jd_text}"""
+
+
+MATCH_PROMPT = """You are a career advisor analyzing a candidate's profile against job requirements.
+
+Required Skills from JD: {required_skills}
+Preferred Skills from JD: {preferred_skills}
+
+Candidate's Background:
+{kb_context}
+
+Analyze the match and return ONLY a JSON object (no markdown, no code blocks):
+{{
+    "matching_skills": ["skills the candidate HAS from the required/preferred list"],
+    "missing_skills": ["skills the candidate DOES NOT HAVE from the required list"],
+    "weak_areas": ["skills the candidate has but with limited depth"],
+    "match_percentage": <number 0-100>,
+    "recommendations": ["actionable suggestions to improve the match"]
+}}"""
+
+
+def analyze_gaps(
+    jd_text: str,
+    generation_model: str = DEFAULT_GENERATION_MODEL,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+) -> GapAnalysis:
+    """
+    Compare JD requirements against KB content.
+    1. Extract skills from JD using LLM
+    2. Retrieve relevant KB chunks
+    3. Match and identify gaps using LLM
+    """
+    import json
+
+    llm = ChatOpenAI(model=generation_model, temperature=0)
+
+    # Step 1: Extract skills from JD
+    extract_response = llm.invoke([
+        HumanMessage(content=EXTRACT_PROMPT.format(jd_text=jd_text))
+    ])
+
+    try:
+        # Clean response — strip markdown code blocks if present
+        raw = extract_response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        skills_data = json.loads(raw)
+    except (json.JSONDecodeError, IndexError):
+        skills_data = {"required_skills": [], "preferred_skills": []}
+
+    required = skills_data.get("required_skills", [])
+    preferred = skills_data.get("preferred_skills", [])
+
+    # Step 2: Retrieve KB context
+    chunks = retrieve_relevant_chunks(jd_text, k=15, embedding_model=embedding_model)
+    kb_context = "\n\n".join(doc.page_content for doc in chunks)
+
+    # Step 3: Match skills
+    match_response = llm.invoke([
+        HumanMessage(content=MATCH_PROMPT.format(
+            required_skills=", ".join(required),
+            preferred_skills=", ".join(preferred),
+            kb_context=kb_context,
+        ))
+    ])
+
+    try:
+        raw = match_response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        match_data = json.loads(raw)
+    except (json.JSONDecodeError, IndexError):
+        match_data = {
+            "matching_skills": [],
+            "missing_skills": required,
+            "weak_areas": [],
+            "match_percentage": 0.0,
+            "recommendations": ["Could not analyze. Try a different model."],
+        }
+
+    return GapAnalysis(
+        matching_skills=match_data.get("matching_skills", []),
+        missing_skills=match_data.get("missing_skills", []),
+        weak_areas=match_data.get("weak_areas", []),
+        match_percentage=match_data.get("match_percentage", 0.0),
+        recommendations=match_data.get("recommendations", []),
+    )

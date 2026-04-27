@@ -1,0 +1,19 @@
+# Environment
+.env
+
+# Vector DB
+vector_db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

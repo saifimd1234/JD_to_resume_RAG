@@ -1,0 +1,471 @@
+"""
+Generate Resume Page — Vertically stacked layout
+Contact Info → JD Input → Config → Style → Generate → Output
+"""
+
+import sys
+import os
+import base64
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import streamlit as st
+import markdown
+
+from frontend.utils.styles import get_custom_css, get_resume_preview_css
+from frontend.utils.export import export_to_docx, export_to_pdf
+import backend.config as cfg
+from backend.retriever import get_chunk_count
+from backend.ingest import run_ingestion, check_kb_changes, get_kb_metadata
+from backend.generator import generate_resume
+from backend.gap_analyzer import analyze_gaps
+from backend.ats_scorer import calculate_ats_score
+
+
+# ─── Page Config ────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Generate Resume | ResumeForge AI",
+    page_icon="📄",
+    layout="wide",
+)
+
+st.markdown(get_custom_css(), unsafe_allow_html=True)
+st.markdown(get_resume_preview_css(), unsafe_allow_html=True)
+
+# ─── Session State ──────────────────────────────────────────────────────────
+for key in ["generated_resume", "retrieved_chunks", "generation_metadata",
+            "gap_analysis", "ats_score", "jd_for_analysis"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
+
+
+# ─── Header ─────────────────────────────────────────────────────────────────
+st.markdown("# Generate Resume")
+st.markdown("Paste a Job Description and generate a tailored, ATS-optimized resume.")
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 1: Knowledge Base & Ingestion
+# ═══════════════════════════════════════════════════════════════════════════
+
+chunk_count = get_chunk_count()
+
+with st.expander("Knowledge Base & Ingestion", expanded=(chunk_count == 0)):
+    # Show KB status
+    kb_changes = check_kb_changes()
+    kb_meta = get_kb_metadata()
+
+    status_col, info_col = st.columns([1, 2])
+
+    with status_col:
+        if chunk_count > 0:
+            st.success(f"Vector DB Ready — {chunk_count} chunks")
+            if kb_meta.get("last_ingestion"):
+                st.caption(f"Last indexed: {kb_meta['last_ingestion'][:19]}")
+        else:
+            st.warning("Vector DB is empty")
+
+    with info_col:
+        if kb_changes["has_changes"]:
+            change_parts = []
+            if kb_changes["new_files"]:
+                change_parts.append(f"**{len(kb_changes['new_files'])} new**")
+            if kb_changes["modified_files"]:
+                change_parts.append(f"**{len(kb_changes['modified_files'])} modified**")
+            if kb_changes["deleted_files"]:
+                change_parts.append(f"**{len(kb_changes['deleted_files'])} deleted**")
+            st.info(f"Knowledge Base changes detected: {', '.join(change_parts)} files. Rebuild recommended.")
+        elif chunk_count > 0:
+            st.caption(f"{kb_changes['total_files']} files — no changes since last ingestion.")
+
+    # Ingestion controls
+    ing_col1, ing_col2, ing_col3 = st.columns(3)
+    with ing_col1:
+        ing_embedding = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="ing_emb")
+    with ing_col2:
+        ing_chunk_size = st.number_input("Chunk Size", 100, 2000, cfg.CHUNK_SIZE, 50, key="ing_cs")
+    with ing_col3:
+        ing_chunk_overlap = st.number_input("Chunk Overlap", 0, 500, cfg.CHUNK_OVERLAP, 50, key="ing_co")
+
+    if st.button("Rebuild Vector DB", type="primary", key="ingest_btn"):
+        with st.spinner("Indexing knowledge base..."):
+            try:
+                stats = run_ingestion(ing_chunk_size, ing_chunk_overlap, cfg.EMBEDDING_MODELS[ing_embedding])
+                st.success(f"Done! {stats['documents_loaded']} docs → {stats['chunks_created']} chunks → {stats['vectors_stored']} vectors")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ingestion failed: {e}")
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 2: Contact Information
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.markdown("## Contact Information")
+st.caption("Appears at the top of your resume header.")
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    contact_name = st.text_input("Full Name *", placeholder="Mohammad Saifi", key="c_name")
+with c2:
+    contact_email = st.text_input("Email *", placeholder="saifimd1234@gmail.com", key="c_email")
+with c3:
+    contact_phone = st.text_input("Phone", placeholder="+91 7209538634", key="c_phone")
+
+c4, c5, c6 = st.columns(3)
+with c4:
+    contact_location = st.text_input("Location", placeholder="Jamshedpur, JH", key="c_loc")
+with c5:
+    contact_linkedin = st.text_input("LinkedIn", placeholder="linkedin.com/in/yourprofile", key="c_li")
+with c6:
+    contact_github = st.text_input("GitHub", placeholder="github.com/yourusername", key="c_gh")
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 3: Job Description
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.markdown("## Job Description")
+
+jd_text = st.text_area(
+    "Paste the full Job Description here",
+    height=300,
+    max_chars=cfg.MAX_JD_CHARACTERS,
+    placeholder="Paste the full job description including requirements, responsibilities, qualifications...",
+    key="jd_input",
+)
+
+char_count = len(jd_text) if jd_text else 0
+color = "#00c853" if char_count < cfg.MAX_JD_CHARACTERS * 0.9 else "#ff6b6b"
+st.markdown(
+    f"<div style='text-align:right; color:{color}; font-size:0.8rem; margin-top:-10px;'>"
+    f"{char_count:,} / {cfg.MAX_JD_CHARACTERS:,} characters</div>",
+    unsafe_allow_html=True,
+)
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 4: Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.markdown("## Configuration")
+
+cfg1, cfg2, cfg3, cfg4 = st.columns(4)
+with cfg1:
+    gen_model_label = st.selectbox("Generation Model", list(cfg.GENERATION_MODELS.keys()), key="gen_m")
+with cfg2:
+    emb_model_label = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="emb_m")
+with cfg3:
+    retrieval_k = st.slider("Top-K Retrieval", 3, 25, 10, key="top_k")
+with cfg4:
+    pass  # Reserved
+
+# Custom prompt
+with st.expander("Custom Prompt (Optional)"):
+    custom_prompt = st.text_area(
+        "Additional instructions",
+        height=80,
+        placeholder="E.g., 'Focus on leadership' or 'Highlight cloud certifications'...",
+        key="custom_prompt",
+    )
+
+# Resume upload
+with st.expander("Upload Existing Resume (Optional)"):
+    uploaded_resume = st.file_uploader("Upload PDF or paste text below", type=["pdf"], key="resume_up")
+    resume_paste = st.text_area("Or paste resume text", height=100, key="resume_paste", placeholder="Paste your current resume text here...")
+    if uploaded_resume:
+        st.info("Resume uploaded — will be used as reference for generation.")
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 5: Resume Style Selection
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.markdown("## Resume Style")
+
+style_cols = st.columns(3, gap="large")
+style_options = list(cfg.RESUME_TEMPLATES.keys())
+
+# Initialize style in session state
+if "selected_style" not in st.session_state:
+    st.session_state.selected_style = "Corporate"
+
+for i, style_name in enumerate(style_options):
+    with style_cols[i]:
+        is_selected = st.session_state.selected_style == style_name
+        border_color = "#7b2ff7" if is_selected else "rgba(255,255,255,0.08)"
+        bg = "rgba(123,47,247,0.1)" if is_selected else "rgba(255,255,255,0.02)"
+
+        st.markdown(
+            f"<div style='border:2px solid {border_color}; background:{bg}; "
+            f"border-radius:12px; padding:16px; text-align:center; min-height:80px;'>"
+            f"<div style='font-size:1.1rem; font-weight:700; color:#e0e0ff;'>"
+            f"{style_name}</div>"
+            f"<div style='font-size:0.8rem; color:#888; margin-top:6px;'>"
+            f"{'Clean & simple' if style_name == 'Minimal' else 'Traditional ATS-ready' if style_name == 'Corporate' else 'Contemporary look'}"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(f"Select {style_name}", key=f"style_{style_name}", use_container_width=True):
+            st.session_state.selected_style = style_name
+            st.rerun()
+
+# Show PDF preview if available
+selected_style = st.session_state.selected_style
+preview_file = cfg.TEMPLATE_PREVIEWS.get(selected_style)
+if preview_file:
+    pdf_path = cfg.PUBLIC_DIR / preview_file
+    if pdf_path.exists():
+        with st.expander(f"Preview: {selected_style} Template", expanded=False):
+            with open(pdf_path, "rb") as f:
+                pdf_data = base64.b64encode(f.read()).decode("utf-8")
+            st.markdown(
+                f'<iframe src="data:application/pdf;base64,{pdf_data}" '
+                f'width="100%" height="500px" style="border:1px solid rgba(255,255,255,0.1); border-radius:8px;"></iframe>',
+                unsafe_allow_html=True,
+            )
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 6: Generate Button
+# ═══════════════════════════════════════════════════════════════════════════
+
+generate_disabled = (
+    not jd_text or not jd_text.strip()
+    or chunk_count == 0
+    or not contact_name or not contact_name.strip()
+)
+
+if chunk_count == 0:
+    st.caption("Run ingestion first to enable generation.")
+if not contact_name or not contact_name.strip():
+    st.caption("Full Name is required.")
+
+col_gen, col_gap = st.columns(2, gap="large")
+
+with col_gen:
+    if st.button(
+        "Generate Resume",
+        type="primary",
+        disabled=generate_disabled,
+        use_container_width=True,
+        key="generate_btn",
+    ):
+        contact_details = {
+            "name": contact_name, "email": contact_email,
+            "phone": contact_phone, "location": contact_location,
+            "linkedin": contact_linkedin, "github": contact_github,
+        }
+        # Combine custom prompt with pasted resume if provided
+        final_custom_prompt = custom_prompt if "custom_prompt" in dir() and custom_prompt else ""
+        if resume_paste and resume_paste.strip():
+            final_custom_prompt += f"\n\nUSER'S EXISTING RESUME (Use as structural reference and style guide):\n{resume_paste}"
+
+        with st.spinner("Generating your tailored resume..."):
+            try:
+                result = generate_resume(
+                    jd_text=jd_text,
+                    generation_model=cfg.GENERATION_MODELS[gen_model_label],
+                    embedding_model=cfg.EMBEDDING_MODELS[emb_model_label],
+                    style=cfg.RESUME_TEMPLATES[selected_style],
+                    custom_prompt=final_custom_prompt,
+                    retrieval_k=retrieval_k,
+                    contact_details=contact_details,
+                )
+                st.session_state.generated_resume = result["resume_text"]
+                st.session_state.retrieved_chunks = result["retrieved_chunks"]
+                st.session_state.generation_metadata = result["metadata"]
+                st.session_state.jd_for_analysis = jd_text
+                st.rerun()
+            except Exception as e:
+                st.error(f"Generation failed: {e}")
+
+with col_gap:
+    if st.button(
+        "Analyze JD Gaps",
+        disabled=generate_disabled,
+        use_container_width=True,
+        key="gap_btn",
+    ):
+        with st.spinner("Analyzing skill gaps..."):
+            try:
+                gap = analyze_gaps(jd_text, cfg.GENERATION_MODELS[gen_model_label], cfg.EMBEDDING_MODELS[emb_model_label])
+                st.session_state.gap_analysis = gap
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gap analysis failed: {e}")
+
+st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 7: Gap Analysis Results
+# ═══════════════════════════════════════════════════════════════════════════
+
+if st.session_state.gap_analysis:
+    gap = st.session_state.gap_analysis
+
+    st.markdown("## JD Gap Analysis")
+
+    # Score metric
+    score_color = "#00c853" if gap.match_percentage >= 70 else "#ffab00" if gap.match_percentage >= 40 else "#ff6b6b"
+    st.markdown(
+        f"<div style='text-align:center; padding:20px; background:rgba(255,255,255,0.03); border-radius:12px; margin-bottom:16px;'>"
+        f"<div style='font-size:0.9rem; color:#888;'>Overall Match</div>"
+        f"<div style='font-size:2.5rem; font-weight:800; color:{score_color};'>{gap.match_percentage:.0f}%</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        st.markdown("#### Matching Skills")
+        for skill in gap.matching_skills:
+            st.markdown(f"- {skill}")
+        if not gap.matching_skills:
+            st.caption("None found")
+    with g2:
+        st.markdown("#### Missing Skills")
+        for skill in gap.missing_skills:
+            st.markdown(f"- {skill}")
+        if not gap.missing_skills:
+            st.caption("No gaps!")
+    with g3:
+        st.markdown("#### Recommendations")
+        for rec in gap.recommendations:
+            st.markdown(f"- {rec}")
+
+    st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 8: Generated Resume Output
+# ═══════════════════════════════════════════════════════════════════════════
+
+if st.session_state.generated_resume:
+    resume_text = st.session_state.generated_resume
+
+    st.markdown("## Generated Resume")
+
+    # Preview / Edit tabs
+    preview_tab, edit_tab = st.tabs(["Preview", "Edit"])
+
+    with preview_tab:
+        resume_html = markdown.markdown(resume_text, extensions=["extra"])
+        st.markdown(
+            f'<div class="resume-preview">{resume_html}</div>',
+            unsafe_allow_html=True,
+        )
+
+    with edit_tab:
+        edited_resume = st.text_area(
+            "Edit your resume (Markdown)",
+            value=resume_text,
+            height=500,
+            key="resume_editor",
+        )
+        if edited_resume != resume_text:
+            st.session_state.generated_resume = edited_resume
+            resume_text = edited_resume
+
+    # Export buttons
+    st.markdown("### Export")
+    dl1, dl2, dl3, dl4 = st.columns(4)
+
+    with dl1:
+        try:
+            docx_bytes = export_to_docx(resume_text)
+            st.download_button("DOCX", docx_bytes, "resume.docx",
+                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                             use_container_width=True, key="dl_docx")
+        except Exception as e:
+            st.error(f"DOCX error: {e}")
+
+    with dl2:
+        try:
+            pdf_bytes = export_to_pdf(resume_text)
+            st.download_button("PDF", pdf_bytes, "resume.pdf",
+                             "application/pdf", use_container_width=True, key="dl_pdf")
+        except Exception as e:
+            st.error(f"PDF error: {e}")
+
+    with dl3:
+        st.download_button("Markdown", resume_text, "resume.md",
+                         "text/markdown", use_container_width=True, key="dl_md")
+
+    with dl4:
+        # ATS Score button
+        if st.button("ATS Score", use_container_width=True, key="ats_btn"):
+            jd_for_score = st.session_state.jd_for_analysis or jd_text
+            if jd_for_score:
+                with st.spinner("Calculating ATS score..."):
+                    try:
+                        ats = calculate_ats_score(resume_text, jd_for_score, cfg.GENERATION_MODELS[gen_model_label])
+                        st.session_state.ats_score = ats
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"ATS scoring error: {e}")
+
+    # ATS Score display
+    if st.session_state.ats_score:
+        ats = st.session_state.ats_score
+        st.markdown("---")
+        st.markdown("### ATS Match Score")
+
+        ats_color = "#00c853" if ats.overall_score >= 70 else "#ffab00" if ats.overall_score >= 50 else "#ff6b6b"
+        st.markdown(
+            f"<div style='text-align:center; padding:20px; background:rgba(255,255,255,0.03); border-radius:12px; margin-bottom:16px;'>"
+            f"<div style='font-size:0.9rem; color:#888;'>Overall ATS Score</div>"
+            f"<div style='font-size:2.5rem; font-weight:800; color:{ats_color};'>{ats.overall_score:.0f}%</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Skills Match", f"{ats.skills_match:.0f}%")
+        a2.metric("Keyword Density", f"{ats.keyword_density:.0f}%")
+        a3.metric("Formatting", f"{ats.formatting_score:.0f}%")
+        a4.metric("Experience Fit", f"{ats.experience_relevance:.0f}%")
+
+        if ats.suggestions:
+            with st.expander("Improvement Suggestions"):
+                for suggestion in ats.suggestions:
+                    st.markdown(f"- {suggestion}")
+
+    # Metadata
+    if st.session_state.generation_metadata:
+        meta = st.session_state.generation_metadata
+        st.markdown("---")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Model", meta.get("generation_model", "N/A"))
+        m2.metric("Chunks Used", meta.get("chunks_retrieved", 0))
+        m3.metric("Style", meta.get("style", "N/A").capitalize())
+
+    # Retrieved chunks
+    if st.session_state.retrieved_chunks:
+        with st.expander(f"Retrieved Chunks ({len(st.session_state.retrieved_chunks)})"):
+            for chunk in st.session_state.retrieved_chunks:
+                score_color = "#00c853" if chunk["score"] > 0.5 else "#ffab00" if chunk["score"] > 0.3 else "#ff6b6b"
+                st.markdown(
+                    f"**#{chunk['rank']}** | `{chunk['doc_type']}` | "
+                    f"<span style='color:{score_color}'>Score: {chunk['score']}</span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<div style='background:rgba(255,255,255,0.03); padding:10px; "
+                    f"border-radius:8px; font-size:0.85rem; color:#b0b0d0; margin-bottom:10px;'>"
+                    f"{chunk['preview']}</div>",
+                    unsafe_allow_html=True,
+                )
