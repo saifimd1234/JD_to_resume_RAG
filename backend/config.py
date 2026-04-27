@@ -9,6 +9,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv(override=True)
 
+# Fallback: Load from Streamlit secrets if not in environment
+if "OPENAI_API_KEY" not in os.environ:
+    try:
+        import streamlit as st
+        if "OPENAI_API_KEY" in st.secrets:
+            os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        pass
+
+# ─── Configuration ─────────────────────────────────────────────────────────────
+ADMIN_EMAIL = "saifimd1234@gmail.com"
+
 # ─── Paths ───────────────────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).parent.parent
 KNOWLEDGE_BASE_DIR = ROOT_DIR / "knowledge_base"

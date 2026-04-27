@@ -20,34 +20,11 @@ class GapAnalysis(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
 
 
-EXTRACT_PROMPT = """You are a skill extraction expert. Given a Job Description, extract ALL required and preferred skills, technologies, tools, and qualifications.
-
-Return ONLY a JSON object with this exact structure (no markdown, no code blocks):
-{{"required_skills": ["skill1", "skill2"], "preferred_skills": ["skill3", "skill4"]}}
-
-Job Description:
-{jd_text}"""
-
-
-MATCH_PROMPT = """You are a career advisor analyzing a candidate's profile against job requirements.
-
-Required Skills from JD: {required_skills}
-Preferred Skills from JD: {preferred_skills}
-
-Candidate's Background:
-{kb_context}
-
-Analyze the match and return ONLY a JSON object (no markdown, no code blocks):
-{{
-    "matching_skills": ["skills the candidate HAS from the required/preferred list"],
-    "missing_skills": ["skills the candidate DOES NOT HAVE from the required list"],
-    "weak_areas": ["skills the candidate has but with limited depth"],
-    "match_percentage": <number 0-100>,
-    "recommendations": ["actionable suggestions to improve the match"]
-}}"""
+from backend.prompts import EXTRACT_PROMPT, MATCH_PROMPT
 
 
 def analyze_gaps(
+    user_id: int,
     jd_text: str,
     generation_model: str = DEFAULT_GENERATION_MODEL,
     embedding_model: str = DEFAULT_EMBEDDING_MODEL,
@@ -80,7 +57,7 @@ def analyze_gaps(
     preferred = skills_data.get("preferred_skills", [])
 
     # Step 2: Retrieve KB context
-    chunks = retrieve_relevant_chunks(jd_text, k=15, embedding_model=embedding_model)
+    chunks = retrieve_relevant_chunks(user_id, jd_text, k=15, embedding_model=embedding_model)
     kb_context = "\n\n".join(doc.page_content for doc in chunks)
 
     # Step 3: Match skills
