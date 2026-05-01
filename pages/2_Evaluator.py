@@ -41,6 +41,16 @@ user_id = st.session_state.user['id']
 # ─── Header ─────────────────────────────────────────────────────────────────
 st.markdown("# 🧪 RAG Evaluator")
 st.markdown("Tune retrieval parameters and inspect chunk quality for your queries.")
+
+if "is_locked" not in st.session_state:
+    st.session_state.is_locked = False
+
+is_locked = st.session_state.is_locked
+lock_help = "This feature is locked. Please contact admin or upgrade your plan to unlock." if is_locked else None
+
+if is_locked:
+    st.warning("🔒 **Features Locked:** You have already used the evaluator or generated a resume. Please contact admin or upgrade your plan to unlock and make further edits.")
+
 st.markdown("---")
 
 
@@ -57,6 +67,8 @@ with param_col1:
         value=CHUNK_SIZE,
         step=50,
         key="eval_chunk_size",
+        disabled=is_locked,
+        help=lock_help
     )
 
 with param_col2:
@@ -67,6 +79,8 @@ with param_col2:
         value=CHUNK_OVERLAP,
         step=25,
         key="eval_chunk_overlap",
+        disabled=is_locked,
+        help=lock_help
     )
 
 with param_col3:
@@ -76,6 +90,8 @@ with param_col3:
         max_value=30,
         value=RETRIEVAL_K,
         key="eval_top_k",
+        disabled=is_locked,
+        help=lock_help
     )
 
 with param_col4:
@@ -83,12 +99,14 @@ with param_col4:
         "Embedding Model",
         options=list(EMBEDDING_MODELS.keys()),
         key="eval_embedding",
+        disabled=is_locked,
+        help=lock_help
     )
 
 # ─── Re-Ingest with Custom Params ──────────────────────────────────────────
 st.markdown("---")
 
-if st.button("🔄 Re-Ingest with These Parameters", type="secondary", key="eval_reingest"):
+if st.button("🔄 Re-Ingest with These Parameters", type="secondary", key="eval_reingest", disabled=is_locked, help=lock_help):
     with st.spinner("Re-ingesting knowledge base with custom parameters..."):
         try:
             stats = run_ingestion(
@@ -114,9 +132,11 @@ test_query = st.text_area(
     height=120,
     placeholder="E.g., 'Looking for a Data Engineer with experience in Apache Spark and Kafka...'",
     key="eval_query",
+    disabled=is_locked,
+    help=lock_help
 )
 
-if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=not test_query):
+if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=is_locked or not test_query, help=lock_help):
     chunk_count = get_chunk_count_for_user(user_id)
 
     if chunk_count == 0:
@@ -130,6 +150,9 @@ if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=
                     k=eval_top_k,
                     embedding_model=EMBEDDING_MODELS[eval_embedding],
                 )
+                
+                # Lock features after evaluation
+                st.session_state.is_locked = True
 
                 st.success(f"✅ Retrieved {len(results)} chunks")
 

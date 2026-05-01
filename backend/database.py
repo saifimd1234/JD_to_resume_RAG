@@ -74,6 +74,19 @@ def init_db():
         # Auto-upgrade the configured admin email
         cursor.execute("UPDATE users SET role = 'admin' WHERE email = ?", (ADMIN_EMAIL,))
         
+        # Create user documents table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """)
+        
         conn.commit()
 
 # Ensure DB is initialized when module loads
@@ -357,4 +370,38 @@ def sync_disk_to_admin_kb(user_id: int):
                 content = '\n'.join(lines[1:]).strip()
                 
             add_kb_entry(user_id, category_dir, title, content)
+
+# ─── User Documents Functions ───────────────────────────────────────────────
+
+def add_user_document(user_id: int, title: str, file_path: str, file_type: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_documents (user_id, title, file_path, file_type) 
+            VALUES (?, ?, ?, ?)
+        """, (user_id, title, file_path, file_type))
+        conn.commit()
+
+def get_user_documents(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM user_documents WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def delete_user_document(doc_id: int, user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM user_documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        doc = cursor.fetchone()
+        if doc:
+            try:
+                if os.path.exists(doc['file_path']):
+                    os.remove(doc['file_path'])
+            except Exception:
+                pass
+            cursor.execute("DELETE FROM user_documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+            conn.commit()
+
 

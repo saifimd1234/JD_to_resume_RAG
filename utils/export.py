@@ -112,12 +112,14 @@ def _add_formatted_text(paragraph, text: str):
                             paragraph.add_run(ip)
 
 
-def export_to_docx(resume_text: str) -> bytes:
+def export_to_docx(resume_text: str, attachments: list = None) -> bytes:
     """
     Convert resume markdown text to a professionally formatted DOCX file.
+    Appends attachments if provided.
 
     Args:
         resume_text: Resume content in markdown format
+        attachments: List of document dicts from user_documents
 
     Returns:
         DOCX file as bytes
@@ -193,6 +195,31 @@ def export_to_docx(resume_text: str) -> bytes:
 
         # Skip empty lines (just add spacing)
 
+    # Handle attachments
+    if attachments:
+        import os
+        for doc_info in attachments:
+            file_path = doc_info.get("file_path")
+            if not file_path or not os.path.exists(file_path):
+                continue
+                
+            doc.add_page_break()
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(f"Attachment: {doc_info.get('title', 'Document')}")
+            run.bold = True
+            
+            ext = file_path.lower().split('.')[-1]
+            if ext in ['png', 'jpg', 'jpeg']:
+                try:
+                    doc.add_picture(file_path, width=Inches(6.0))
+                except Exception:
+                    doc.add_paragraph("[Image rendering failed]")
+            elif ext == 'pdf':
+                doc.add_paragraph("[PDF attached. Please refer to the PDF export for full visual inclusion or view original file.]")
+            else:
+                doc.add_paragraph(f"[Attached File: {doc_info.get('title')}]")
+
     # Save to bytes
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -218,12 +245,14 @@ class ResumePDF(FPDF):
 
 import markdown
 
-def export_to_pdf(resume_text: str) -> bytes:
+def export_to_pdf(resume_text: str, attachments: list = None) -> bytes:
     """
     Convert resume markdown text to a clean, ATS-friendly PDF with clickable links.
+    Appends attachments using pypdf if provided.
 
     Args:
         resume_text: Resume content in markdown format
+        attachments: List of document dicts from user_documents
 
     Returns:
         PDF file as bytes
@@ -270,4 +299,53 @@ def export_to_pdf(resume_text: str) -> bytes:
     buffer = io.BytesIO()
     pdf.output(buffer)
     buffer.seek(0)
+    
+    # Handle attachments
+    if attachments:
+        try:
+            from pypdf import PdfWriter, PdfReader
+            import os
+            
+            writer = PdfWriter()
+            # Add the generated resume PDF
+            writer.append(buffer)
+            
+            # Add attachments
+            for doc_info in attachments:
+                file_path = doc_info.get("file_path")
+                if not file_path or not os.path.exists(file_path):
+                    continue
+                    
+                ext = file_path.lower().split('.')[-1]
+                if ext == 'pdf':
+                    try:
+                        reader = PdfReader(file_path)
+                        writer.append(reader)
+                    except Exception:
+                        pass
+                elif ext in ['png', 'jpg', 'jpeg']:
+                    # Create a temporary PDF for the image
+                    img_pdf = FPDF()
+                    img_pdf.add_page()
+                    # Add title
+                    img_pdf.set_font("Helvetica", 'B', 12)
+                    img_pdf.cell(0, 10, f"Attachment: {doc_info.get('title', 'Document')}", ln=True, align='C')
+                    try:
+                        img_pdf.image(file_path, x=15, y=30, w=180)
+                    except Exception:
+                        img_pdf.cell(0, 10, "[Image Error]", ln=True, align='C')
+                    
+                    img_buf = io.BytesIO()
+                    img_pdf.output(img_buf)
+                    img_buf.seek(0)
+                    writer.append(PdfReader(img_buf))
+                    
+            final_buffer = io.BytesIO()
+            writer.write(final_buffer)
+            final_buffer.seek(0)
+            return final_buffer.getvalue()
+        except ImportError:
+            # If pypdf is missing, just return the main PDF
+            pass
+            
     return buffer.getvalue()

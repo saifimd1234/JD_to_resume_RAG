@@ -34,7 +34,97 @@ CATEGORIES = ["projects", "experience", "skills", "education", "certifications",
 if "kb_action" not in st.session_state:
     st.session_state.kb_action = None  # None, 'add'
 
-st.markdown("### Add New Entry")
+st.markdown("### 🤖 Auto-Fill from Resume (AI Assisted)")
+st.markdown("Upload your resume to automatically extract and populate your Knowledge Base.")
+
+with st.expander("Auto-Fill Options", expanded=False):
+    af_resume_file = st.file_uploader("Upload Resume PDF", type=["pdf"], key="af_pdf")
+    af_resume_text = st.text_area("Or paste resume text", height=150, key="af_txt")
+    
+    if st.button("Parse Resume", type="primary"):
+        if not af_resume_file and not af_resume_text.strip():
+            st.error("Please upload a PDF or paste your resume text.")
+        else:
+            resume_content = ""
+            if af_resume_file:
+                try:
+                    import pypdf
+                    pdf_reader = pypdf.PdfReader(af_resume_file)
+                    for page in pdf_reader.pages:
+                        resume_content += page.extract_text() + "\n"
+                except ImportError:
+                    st.error("PDF parsing library not installed. Please paste text instead.")
+                except Exception as e:
+                    st.error(f"Error reading PDF: {e}")
+            
+            if af_resume_text.strip():
+                resume_content += "\n" + af_resume_text
+                
+            if resume_content.strip():
+                with st.spinner("Analyzing and extracting entries..."):
+                    from backend.generator import parse_resume_to_kb
+                    from backend.config import DEFAULT_GENERATION_MODEL
+                    existing_entries = get_kb_entries(user_id)
+                    parsed_data = parse_resume_to_kb(resume_content, existing_entries, DEFAULT_GENERATION_MODEL)
+                    
+                    if parsed_data:
+                        st.session_state.pending_kb_entries = parsed_data
+                        st.success(f"Extracted {len(parsed_data)} new entries!")
+                    else:
+                        st.warning("No new unique entries extracted.")
+
+if "pending_kb_entries" in st.session_state and st.session_state.pending_kb_entries:
+    st.markdown("#### Review Extracted Entries")
+    
+    with st.form("save_parsed_kb"):
+        st.info("Review, edit, or uncheck the entries you don't want to save.")
+        
+        selected_indices = []
+        for i, entry in enumerate(st.session_state.pending_kb_entries):
+            st.markdown(f"**{entry.get('category', 'unknown').capitalize()}**: {entry.get('title', 'Untitled')}")
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.checkbox("Include", value=True, key=f"inc_{i}"):
+                    selected_indices.append(i)
+            with col2:
+                st.session_state.pending_kb_entries[i]['content'] = st.text_area(
+                    "Content", 
+                    value=entry.get('content', ''), 
+                    height=100, 
+                    key=f"cnt_{i}"
+                )
+            st.markdown("---")
+            
+        if st.form_submit_button("Save Selected to KB", type="primary"):
+            from backend.database import add_kb_entry
+            
+            saved_count = 0
+            for i in selected_indices:
+                ent = st.session_state.pending_kb_entries[i]
+                add_kb_entry(user_id, ent.get("category", "personal"), ent.get("title", "Untitled"), ent.get("content", ""), "")
+                saved_count += 1
+            
+            # Sync Admin KB to Root
+            if st.session_state.user['role'] == 'admin':
+                from backend.database import sync_admin_kb_to_disk
+                try:
+                    sync_admin_kb_to_disk(user_id)
+                    st.toast("Admin KB synchronized to root directory.")
+                except Exception as e:
+                    st.error(f"Failed to sync Admin KB: {e}")
+            
+            st.session_state.pending_kb_entries = []
+            if saved_count > 0:
+                st.success(f"{saved_count} entries saved!")
+            st.rerun()
+            
+    if st.button("Cancel & Clear"):
+        st.session_state.pending_kb_entries = []
+        st.rerun()
+
+st.markdown("---")
+st.markdown("### Manual Entry")
 
 # Category selection MUST be outside the form to be reactive
 category = st.selectbox("Category", CATEGORIES)

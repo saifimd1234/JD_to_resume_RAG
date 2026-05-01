@@ -45,10 +45,21 @@ for key in ["generated_resume", "retrieved_chunks", "generation_metadata",
     if key not in st.session_state:
         st.session_state[key] = None
 
+if "is_locked" not in st.session_state:
+    st.session_state.is_locked = False
+
+if "jd_input_text" not in st.session_state:
+    st.session_state.jd_input_text = ""
+
+is_locked = st.session_state.is_locked
+lock_help = "This feature is locked. Please contact admin or upgrade your plan to unlock." if is_locked else None
+
 
 # ─── Header ─────────────────────────────────────────────────────────────────
 st.markdown("# Generate Resume")
 st.markdown("Paste a Job Description and generate a tailored, ATS-optimized resume.")
+if is_locked:
+    st.warning("🔒 **Features Locked:** You have already generated a resume. Please contact admin or upgrade your plan to unlock and make further edits.")
 st.markdown("---")
 
 
@@ -90,13 +101,13 @@ with st.expander("Knowledge Base & Ingestion", expanded=(chunk_count == 0)):
     # Ingestion controls
     ing_col1, ing_col2, ing_col3 = st.columns(3)
     with ing_col1:
-        ing_embedding = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="ing_emb")
+        ing_embedding = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="ing_emb", disabled=is_locked, help=lock_help)
     with ing_col2:
-        ing_chunk_size = st.number_input("Chunk Size", 100, 2000, cfg.CHUNK_SIZE, 50, key="ing_cs")
+        ing_chunk_size = st.number_input("Chunk Size", 100, 2000, cfg.CHUNK_SIZE, 50, key="ing_cs", disabled=is_locked, help=lock_help)
     with ing_col3:
-        ing_chunk_overlap = st.number_input("Chunk Overlap", 0, 500, cfg.CHUNK_OVERLAP, 50, key="ing_co")
+        ing_chunk_overlap = st.number_input("Chunk Overlap", 0, 500, cfg.CHUNK_OVERLAP, 50, key="ing_co", disabled=is_locked, help=lock_help)
 
-    if st.button("Rebuild Vector DB", type="primary", key="ingest_btn"):
+    if st.button("Rebuild Vector DB", type="primary", key="ingest_btn", disabled=is_locked, help=lock_help):
         with st.spinner("Indexing knowledge base..."):
             try:
                 stats = run_ingestion(user_id, ing_chunk_size, ing_chunk_overlap, cfg.EMBEDDING_MODELS[ing_embedding])
@@ -142,12 +153,24 @@ st.markdown("## Job Information")
 
 job_role = st.text_input("Target Job Role *", placeholder="e.g., Senior Data Engineer", key="job_role_input")
 
-jd_text = st.text_area(
+if st.button("✨ Auto-Generate Job Description", disabled=not job_role.strip()):
+    with st.spinner("Generating relevant job description..."):
+        from backend.generator import generate_job_description
+        gen_m = st.session_state.get("gen_m", list(cfg.GENERATION_MODELS.keys())[0])
+        st.session_state.jd_input_text = generate_job_description(job_role, cfg.GENERATION_MODELS[gen_m])
+        st.rerun()
+
+jd_text_widget = st.text_area(
     "Paste Job Description *",
+    value=st.session_state.jd_input_text,
     height=250,
     placeholder="Paste the full job description including requirements, responsibilities, qualifications...",
-    key="jd_input",
+    key="jd_input_widget"
 )
+
+# Update session state with the actual value from the widget
+st.session_state.jd_input_text = jd_text_widget
+jd_text = jd_text_widget
 
 char_count = len(jd_text) if jd_text else 0
 color = "#00c853" if char_count < cfg.MAX_JD_CHARACTERS * 0.9 else "#ff6b6b"
@@ -160,6 +183,53 @@ st.markdown(
 st.markdown("---")
 
 
+st.markdown("## Document Type & Attachments")
+
+doc_type_option = st.radio("Select Output Format", ["Resume", "CV"], horizontal=True, key="doc_type_radio")
+st.session_state.doc_type = doc_type_option.lower()
+
+if st.session_state.doc_type == "cv":
+    st.markdown("#### Attachments")
+    from backend.database import get_user_documents
+    user_docs = get_user_documents(user_id)
+    
+    if user_docs:
+        doc_options = {f"{d['title']} ({d['file_type'].split('/')[-1].upper()})": d for d in user_docs}
+        selected_doc_names = st.multiselect("Select documents to attach to your CV (Order is preserved)", list(doc_options.keys()))
+        
+        if selected_doc_names:
+            st.session_state.selected_attachments = [doc_options[name] for name in selected_doc_names]
+            with st.expander("Preview Attached Documents", expanded=True):
+                for i, doc in enumerate(st.session_state.selected_attachments, 1):
+                    st.markdown(f"{i}. **{doc['title']}**")
+        else:
+            st.session_state.selected_attachments = []
+            st.warning("Some documents are missing. Would you like to upload now?")
+    else:
+        st.session_state.selected_attachments = []
+        st.warning("You have no uploaded documents. Would you like to upload one now?")
+        
+    if not user_docs or not selected_doc_names:
+        with st.expander("Upload Document Now"):
+            inline_doc_title = st.text_input("Document Title *", key="inline_doc_title")
+            inline_uploaded_file = st.file_uploader("Select File", type=["pdf", "png", "jpg", "jpeg"], key="inline_doc_upload")
+            if st.button("Upload & Refresh"):
+                if inline_doc_title and inline_uploaded_file:
+                    from backend.database import add_user_document
+                    import re, time
+                    safe_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', inline_uploaded_file.name)
+                    unique_filename = f"{int(time.time())}_{safe_filename}"
+                    file_path = Path(__file__).parent.parent / "data" / "user_docs" / str(user_id) / unique_filename
+                    import os
+                    os.makedirs(file_path.parent, exist_ok=True)
+                    with open(file_path, "wb") as f:
+                        f.write(inline_uploaded_file.getbuffer())
+                    add_user_document(user_id, inline_doc_title.strip(), str(file_path), inline_uploaded_file.type)
+                    st.success("Uploaded!")
+                    st.rerun()
+
+st.markdown("---")
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 4: Configuration
 # ═══════════════════════════════════════════════════════════════════════════
@@ -168,11 +238,11 @@ st.markdown("## Configuration")
 
 cfg1, cfg2, cfg3, cfg4 = st.columns(4)
 with cfg1:
-    gen_model_label = st.selectbox("Generation Model", list(cfg.GENERATION_MODELS.keys()), key="gen_m")
+    gen_model_label = st.selectbox("Generation Model", list(cfg.GENERATION_MODELS.keys()), key="gen_m", disabled=is_locked, help=lock_help)
 with cfg2:
-    emb_model_label = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="emb_m")
+    emb_model_label = st.selectbox("Embedding Model", list(cfg.EMBEDDING_MODELS.keys()), key="emb_m", disabled=is_locked, help=lock_help)
 with cfg3:
-    retrieval_k = st.slider("Top-K Retrieval", 3, 25, 10, key="top_k")
+    retrieval_k = st.slider("Top-K Retrieval", 3, 25, 10, key="top_k", disabled=is_locked, help=lock_help)
 with cfg4:
     pass  # Reserved
 
@@ -183,12 +253,14 @@ with st.expander("Custom Prompt (Optional)"):
         height=80,
         placeholder="E.g., 'Focus on leadership' or 'Highlight cloud certifications'...",
         key="custom_prompt",
+        disabled=is_locked,
+        help=lock_help
     )
 
 # Resume upload
 with st.expander("Upload Existing Resume (Optional)"):
-    uploaded_resume = st.file_uploader("Upload PDF or paste text below", type=["pdf"], key="resume_up")
-    resume_paste = st.text_area("Or paste resume text", height=100, key="resume_paste", placeholder="Paste your current resume text here...")
+    uploaded_resume = st.file_uploader("Upload PDF or paste text below", type=["pdf"], key="resume_up", disabled=is_locked, help=lock_help)
+    resume_paste = st.text_area("Or paste resume text", height=100, key="resume_paste", placeholder="Paste your current resume text here...", disabled=is_locked, help=lock_help)
     if uploaded_resume:
         st.info("Resume uploaded — will be used as reference for generation.")
 
@@ -199,13 +271,17 @@ st.markdown("---")
 # SECTION 5: Resume Style Selection
 # ═══════════════════════════════════════════════════════════════════════════
 
-st.markdown("## Resume Style")
+st.markdown("## Style Selection")
 
 style_cols = st.columns(3, gap="large")
-style_options = list(cfg.RESUME_TEMPLATES.keys())
+
+if st.session_state.doc_type == "cv":
+    style_options = ["Minimal", "Corporate"]
+else:
+    style_options = list(cfg.RESUME_TEMPLATES.keys())
 
 # Initialize style in session state
-if "selected_style" not in st.session_state:
+if "selected_style" not in st.session_state or st.session_state.selected_style not in style_options:
     st.session_state.selected_style = "Corporate"
 
 for i, style_name in enumerate(style_options):
@@ -224,7 +300,7 @@ for i, style_name in enumerate(style_options):
             f"</div></div>",
             unsafe_allow_html=True,
         )
-        if st.button(f"Select {style_name}", key=f"style_{style_name}", use_container_width=True):
+        if st.button(f"Select {style_name}", key=f"style_{style_name}", use_container_width=True, disabled=is_locked, help=lock_help):
             st.session_state.selected_style = style_name
             st.rerun()
 
@@ -268,7 +344,7 @@ col_gen, col_gap = st.columns(2, gap="large")
 
 with col_gen:
     if st.button(
-        "Generate Resume",
+        "Generate Resume" if st.session_state.doc_type == "resume" else "Generate CV",
         type="primary",
         disabled=generate_disabled,
         use_container_width=True,
@@ -325,6 +401,7 @@ if st.session_state.get("generate_trigger"):
                 custom_prompt=final_custom_prompt,
                 retrieval_k=retrieval_k,
                 contact_details=contact_details,
+                doc_type=st.session_state.doc_type,
             )
             
             increment_resume_count(user_id)
@@ -337,6 +414,7 @@ if st.session_state.get("generate_trigger"):
             st.session_state.retrieved_chunks = result["retrieved_chunks"]
             st.session_state.generation_metadata = result["metadata"]
             st.session_state.jd_for_analysis = jd_text
+            st.session_state.is_locked = True
             st.rerun()
         except Exception as e:
             st.error(f"Generation failed: {e}")
@@ -429,7 +507,10 @@ if st.session_state.gap_analysis:
 if st.session_state.generated_resume:
     resume_text = st.session_state.generated_resume
 
-    st.markdown("## Generated Resume")
+    if st.session_state.doc_type == "cv":
+        st.markdown("## Generated CV")
+    else:
+        st.markdown("## Generated Resume")
 
     # Enhanced Generation Feedback
     if st.session_state.get("last_injected_skills"):
@@ -472,8 +553,9 @@ if st.session_state.generated_resume:
 
     with dl1:
         try:
-            docx_bytes = export_to_docx(resume_text)
-            st.download_button("DOCX", docx_bytes, "resume.docx",
+            attachments = st.session_state.get("selected_attachments", [])
+            docx_bytes = export_to_docx(resume_text, attachments)
+            st.download_button("DOCX", docx_bytes, "document.docx",
                              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                              use_container_width=True, key="dl_docx")
         except Exception as e:
@@ -481,14 +563,15 @@ if st.session_state.generated_resume:
 
     with dl2:
         try:
-            pdf_bytes = export_to_pdf(resume_text)
-            st.download_button("PDF", pdf_bytes, "resume.pdf",
+            attachments = st.session_state.get("selected_attachments", [])
+            pdf_bytes = export_to_pdf(resume_text, attachments)
+            st.download_button("PDF", pdf_bytes, "document.pdf",
                              "application/pdf", use_container_width=True, key="dl_pdf")
         except Exception as e:
             st.error(f"PDF error: {e}")
 
     with dl3:
-        st.download_button("Markdown", resume_text, "resume.md",
+        st.download_button("Markdown", resume_text, "document.md",
                          "text/markdown", use_container_width=True, key="dl_md")
 
     with dl4:

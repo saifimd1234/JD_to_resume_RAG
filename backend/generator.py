@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 
 from backend.config import DEFAULT_GENERATION_MODEL, RETRIEVAL_K, DEFAULT_EMBEDDING_MODEL
 from backend.retriever import retrieve_relevant_chunks, retrieve_with_scores
-from backend.prompts import STYLE_INSTRUCTIONS, SYSTEM_PROMPT, USER_PROMPT
+from backend.prompts import STYLE_INSTRUCTIONS, SYSTEM_PROMPT, CV_SYSTEM_PROMPT, USER_PROMPT
 
 # ─── Helper Functions ───────────────────────────────────────────────────────
 
@@ -90,6 +90,7 @@ def generate_resume(
     custom_prompt: str = "",
     retrieval_k: int = RETRIEVAL_K,
     contact_details: dict = None,
+    doc_type: str = "resume",
 ) -> dict:
     """
     Generate a tailored resume from a JD using RAG.
@@ -103,6 +104,7 @@ def generate_resume(
         custom_prompt: Optional additional instructions
         retrieval_k: Number of chunks to retrieve
         contact_details: Dict with name, email, phone, location, linkedin, github
+        doc_type: "resume" or "cv"
 
     Returns:
         dict with keys: resume_text, retrieved_chunks, metadata
@@ -128,7 +130,9 @@ def generate_resume(
     style_instructions = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS["corporate"])
 
     # 5. Construct messages
-    system_message = SYSTEM_PROMPT.format(
+    base_prompt = CV_SYSTEM_PROMPT if doc_type == "cv" else SYSTEM_PROMPT
+    
+    system_message = base_prompt.format(
         context=context,
         style_instructions=style_instructions,
         contact_info=contact_info,
@@ -174,3 +178,80 @@ def generate_resume(
             "retrieval_k": retrieval_k,
         },
     }
+
+def generate_job_description(
+    job_role: str,
+    generation_model: str = DEFAULT_GENERATION_MODEL
+) -> str:
+    """
+    Generate a relevant job description based on a target job role.
+    """
+    llm = _get_llm(generation_model)
+    system_prompt = (
+        "You are an expert technical recruiter and hiring manager. "
+        "Your task is to write a comprehensive, ATS-friendly Job Description for the given job role. "
+        "Include a brief summary, key responsibilities, required skills (both technical and soft skills), "
+        "and qualifications. Format the output in clean Markdown."
+    )
+    user_prompt = f"Generate a detailed Job Description for the role: {job_role}"
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt),
+    ]
+    
+    response = llm.invoke(messages)
+    return response.content
+
+def parse_resume_to_kb(
+    resume_text: str,
+    existing_kb: list,
+    generation_model: str = DEFAULT_GENERATION_MODEL
+) -> list[dict]:
+    """
+    Parse a resume text into structured Knowledge Base entries, avoiding duplicates with existing KB.
+    Returns a list of dicts: [{"category": "...", "title": "...", "content": "..."}]
+    """
+    import json
+    llm = _get_llm(generation_model)
+    
+    existing_kb_text = ""
+    if existing_kb:
+        existing_kb_text = "EXISTING KNOWLEDGE BASE ENTRIES (DO NOT DUPLICATE THESE):\n"
+        for entry in existing_kb:
+            existing_kb_text += f"- Category: {entry['category']} | Title: {entry['title']}\n"
+    
+    system_prompt = (
+        "You are an AI assistant that extracts structured information from a resume. "
+        "Extract the individual experiences, projects, skills, education, and certifications. "
+        "For each item, provide a 'category' (must be one of: 'projects', 'experience', 'skills', 'education', 'certifications', 'personal'), "
+        "a 'title' (e.g., the job title, project name, or skill group), and 'content' (the detailed description in markdown format). "
+        "IMPORTANT: You MUST NOT extract items that are already in the existing knowledge base. "
+        "If a project or experience is clearly a duplicate of an existing entry, ignore it or consolidate new details. "
+        "Return the result ONLY as a valid JSON array of objects, with keys 'category', 'title', and 'content'. "
+        "Do not include markdown code blocks around the JSON."
+    )
+    
+    user_prompt = f"{existing_kb_text}\n\nRESUME TEXT:\n{resume_text}"
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt),
+    ]
+    
+    response = llm.invoke(messages)
+    content = response.content.strip()
+    
+    # Clean up possible markdown wrappers
+    if content.startswith("```json"):
+        content = content[7:]
+    if content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+        
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return []
+
