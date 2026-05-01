@@ -5,6 +5,7 @@ import streamlit as st
 import re
 import time
 import requests
+import base64
 
 # Add root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -73,16 +74,40 @@ with tab_local:
         st.info("You haven't uploaded any documents yet.")
     else:
         for doc in docs:
-            col_title, col_type, col_action = st.columns([4, 2, 1])
+            col_title, col_type, col_view, col_action = st.columns([4, 2, 1, 1])
             with col_title:
                 st.markdown(f"**{doc['title']}**")
             with col_type:
                 st.caption(f"Type: {doc['file_type'].split('/')[-1].upper()} | Added: {doc['created_at'][:10]}")
+            with col_view:
+                show_preview = st.checkbox("View", key=f"view_{doc['id']}")
             with col_action:
                 if st.button("Delete", key=f"del_{doc['id']}"):
                     delete_user_document(doc['id'], user_id)
                     st.rerun()
+            
+            if show_preview:
+                file_path = doc['file_path']
+                if os.path.exists(file_path):
+                    ext = file_path.lower().split('.')[-1]
+                    if ext in ['png', 'jpg', 'jpeg']:
+                        st.image(file_path, caption=doc['title'], use_column_width=True)
+                    elif ext == 'pdf':
+                        try:
+                            with open(file_path, "rb") as f:
+                                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                        except Exception as e:
+                            st.error(f"Error displaying PDF: {e}")
+                    else:
+                        st.info("Preview not available for this file type.")
+                        with open(file_path, "rb") as f:
+                            st.download_button("Download to View", f, file_name=os.path.basename(file_path), key=f"dl_btn_{doc['id']}")
+                else:
+                    st.error("File not found on disk.")
             st.markdown("---")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB: Cloud Folders

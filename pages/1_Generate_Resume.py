@@ -34,10 +34,21 @@ st.set_page_config(
 st.markdown(get_custom_css(), unsafe_allow_html=True)
 st.markdown(get_resume_preview_css(), unsafe_allow_html=True)
 
-# ─── Auth State ──────────────────────────────────────────────────────────────
+# ─── Auth Check ─────────────────────────────────────────────────────────────
 if "user" not in st.session_state or st.session_state.user is None:
     st.warning("Please log in from the main page first.")
     st.stop()
+
+user_id = st.session_state.user['id']
+user_profile = st.session_state.user
+
+# Initialize session state for contact info from user profile if not set
+if "c_name" not in st.session_state: st.session_state.c_name = user_profile.get("full_name") or ""
+if "c_email" not in st.session_state: st.session_state.c_email = user_profile.get("email") or ""
+if "c_phone" not in st.session_state: st.session_state.c_phone = user_profile.get("phone") or ""
+if "c_loc" not in st.session_state: st.session_state.c_loc = user_profile.get("location") or ""
+if "c_li" not in st.session_state: st.session_state.c_li = user_profile.get("linkedin") or ""
+if "c_gh" not in st.session_state: st.session_state.c_gh = user_profile.get("github") or ""
 
 # ─── Session State ──────────────────────────────────────────────────────────
 for key in ["generated_resume", "retrieved_chunks", "generation_metadata",
@@ -128,19 +139,19 @@ st.caption("Appears at the top of your resume header.")
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    contact_name = st.text_input("Full Name *", placeholder="Mohammad Saifi", key="c_name")
+    contact_name = st.text_input("Full Name *", value=st.session_state.c_name, placeholder="Mohammad Saifi", key="c_name_input")
 with c2:
-    contact_email = st.text_input("Email *", placeholder="saifimd1234@gmail.com", key="c_email")
+    contact_email = st.text_input("Email *", value=st.session_state.c_email, placeholder="saifimd1234@gmail.com", key="c_email_input")
 with c3:
-    contact_phone = st.text_input("Phone", placeholder="+91 7209538634", key="c_phone")
+    contact_phone = st.text_input("Phone", value=st.session_state.c_phone, placeholder="+91 7209538634", key="c_phone_input")
 
 c4, c5, c6 = st.columns(3)
 with c4:
-    contact_location = st.text_input("Location", placeholder="Jamshedpur, JH", key="c_loc")
+    contact_location = st.text_input("Location", value=st.session_state.c_loc, placeholder="Jamshedpur, JH", key="c_loc_input")
 with c5:
-    contact_linkedin = st.text_input("LinkedIn", placeholder="linkedin.com/in/yourprofile", key="c_li")
+    contact_linkedin = st.text_input("LinkedIn", value=st.session_state.c_li, placeholder="linkedin.com/in/yourprofile", key="c_li_input")
 with c6:
-    contact_github = st.text_input("GitHub", placeholder="github.com/yourusername", key="c_gh")
+    contact_github = st.text_input("GitHub", value=st.session_state.c_gh, placeholder="github.com/yourusername", key="c_gh_input")
 
 st.markdown("---")
 
@@ -351,9 +362,12 @@ with col_gen:
         key="generate_btn",
     ):
         contact_details = {
-            "name": contact_name, "email": contact_email,
-            "phone": contact_phone, "location": contact_location,
-            "linkedin": contact_linkedin, "github": contact_github,
+            "name": st.session_state.get("c_name_input"),
+            "email": st.session_state.get("c_email_input"),
+            "phone": st.session_state.get("c_phone_input"),
+            "location": st.session_state.get("c_loc_input"),
+            "linkedin": st.session_state.get("c_li_input"),
+            "github": st.session_state.get("c_gh_input"),
         }
         st.session_state.generate_trigger = "normal"
         st.rerun()

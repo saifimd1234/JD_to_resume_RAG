@@ -33,6 +33,18 @@ def init_db():
         if 'last_job_role' not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN last_job_role TEXT")
             
+        # Migration for profile columns
+        profile_cols = {
+            'full_name': 'TEXT',
+            'phone': 'TEXT',
+            'location': 'TEXT',
+            'linkedin': 'TEXT',
+            'github': 'TEXT'
+        }
+        for col, col_type in profile_cols.items():
+            if col not in columns:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+            
         # Create knowledge base entries table
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS kb_entries (
@@ -129,7 +141,7 @@ def authenticate_user(email: str, password: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT id, email, password_hash, role, resumes_generated, last_job_role FROM users WHERE email = ?", (email,))
+        cursor.execute("SELECT id, email, password_hash, role, resumes_generated, last_job_role, full_name, phone, location, linkedin, github FROM users WHERE email = ?", (email,))
         user = cursor.fetchone()
         
         if user and bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
@@ -138,7 +150,12 @@ def authenticate_user(email: str, password: str):
                 "email": user["email"],
                 "role": user["role"],
                 "resumes_generated": user["resumes_generated"],
-                "last_job_role": user["last_job_role"]
+                "last_job_role": user["last_job_role"],
+                "full_name": user["full_name"],
+                "phone": user["phone"],
+                "location": user["location"],
+                "linkedin": user["linkedin"],
+                "github": user["github"]
             }
         return None
 
@@ -167,6 +184,25 @@ def increment_resume_count(user_id: int):
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET resumes_generated = resumes_generated + 1 WHERE id = ?", (user_id,))
         conn.commit()
+
+def update_user_profile(user_id: int, profile_data: dict):
+    """Update user profile details."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users 
+            SET full_name = ?, phone = ?, location = ?, linkedin = ?, github = ?
+            WHERE id = ?
+        """, (
+            profile_data.get("full_name"),
+            profile_data.get("phone"),
+            profile_data.get("location"),
+            profile_data.get("linkedin"),
+            profile_data.get("github"),
+            user_id
+        ))
+        conn.commit()
+
 
 # ─── Resume Tracking Functions ─────────────────────────────────────────────
 
