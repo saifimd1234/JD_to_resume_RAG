@@ -86,6 +86,19 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
         """)
+
+        # Create user cloud links table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_cloud_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            folder_link TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """)
         
         conn.commit()
 
@@ -403,5 +416,30 @@ def delete_user_document(doc_id: int, user_id: int):
                 pass
             cursor.execute("DELETE FROM user_documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
             conn.commit()
+
+# ─── Cloud Storage Functions ───────────────────────────────────────────────
+
+def add_cloud_link(user_id: int, name: str, provider: str, folder_link: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_cloud_links (user_id, name, provider, folder_link) 
+            VALUES (?, ?, ?, ?)
+        """, (user_id, name, provider, folder_link))
+        conn.commit()
+
+def get_cloud_links(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM user_cloud_links WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def delete_cloud_link(link_id: int, user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_cloud_links WHERE id = ? AND user_id = ?", (link_id, user_id))
+        conn.commit()
+
 
 
