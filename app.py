@@ -30,29 +30,38 @@ if "user" not in st.session_state:
 
 # ─── Auth UI ───────────────────────────────────────────────────────────────
 if st.session_state.user is None:
-    st.markdown("<h1 style='text-align: center; margin-top: 50px;'>ResumeForge AI</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #888;'>AI-Powered JD-to-Resume Generator</p>", unsafe_allow_html=True)
-    
-    # Add custom CSS for Auth UI
+    st.markdown("""
+        <div style='text-align:center; margin-top:48px; margin-bottom:8px;'>
+            <div style='display:inline-flex; align-items:center; justify-content:center;
+                        width:52px; height:52px; border-radius:14px; background:#EEF0FE;
+                        color:#4F46E5; font-weight:800; font-size:1.4rem; margin-bottom:14px;'>R</div>
+            <h1 style='margin:0; font-size:1.8rem; font-weight:800; letter-spacing:-0.03em; color:#1A2033;'>
+                Welcome to ResumeForge</h1>
+            <p style='color:#555D72; font-size:0.98rem; margin-top:6px;'>
+                Tailored, ATS-ready resumes from any job description — powered by your own experience.</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Auth card styling (forms inside the card stay flat)
     st.markdown("""
         <style>
         .auth-container {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
+            background: #FFFFFF;
+            border: 1px solid #E6E8EF;
+            border-radius: 16px;
             padding: 2rem;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 12px rgba(16, 24, 40, 0.07);
         }
         div[data-testid="stForm"] {
             border: none;
             background: transparent;
             padding: 0;
+            box-shadow: none;
         }
         </style>
     """, unsafe_allow_html=True)
     
-    auth_col1, auth_col2, auth_col3 = st.columns([1, 2, 1])
+    auth_col1, auth_col2, auth_col3 = st.columns([1, 1.3, 1])
     with auth_col2:
         st.markdown('<div class="auth-container">', unsafe_allow_html=True)
         tab1, tab2, tab3 = st.tabs(["Login", "Sign Up", "Forgot Password"])
@@ -149,10 +158,17 @@ if st.session_state.user is None:
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("# ResumeForge AI")
-    st.markdown(f"**User**: `{st.session_state.user['email']}`")
-    st.markdown(f"**Role**: `{st.session_state.user['role'].upper()}`")
-    
+    st.markdown("# ResumeForge")
+    role = st.session_state.user['role']
+    role_class = "rf-pill-accent" if role == "admin" else ""
+    st.markdown(
+        f"<div style='margin:4px 0 12px 0;'>"
+        f"<div style='font-weight:600; font-size:0.9rem; color:#1A2033;'>{st.session_state.user['email']}</div>"
+        f"<span class='rf-pill {role_class}' style='margin-top:6px;'>{role.capitalize()}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     if st.button("Log Out"):
         st.session_state.user = None
         st.rerun()
@@ -206,44 +222,46 @@ with st.sidebar:
     """)
 
 # ─── Main Content ──────────────────────────────────────────────────────────
-st.markdown("# ResumeForge AI Dashboard")
-st.markdown("### Welcome back!")
+first_name = (st.session_state.user.get("full_name") or st.session_state.user["email"].split("@")[0]).split(" ")[0]
+st.markdown(f"""
+<div class='rf-page-header'>
+    <p class='rf-page-title'>Good to see you, {first_name}</p>
+    <p class='rf-page-sub'>Here's everything you need to land your next role.</p>
+</div>
+""", unsafe_allow_html=True)
 st.markdown("---")
 
 # Feature cards
-f1, f2, f3 = st.columns(3)
+f1, f2, f3 = st.columns(3, gap="medium")
 
 with f1:
     st.markdown("""
-    <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
-    border-radius:12px; padding:20px; min-height:140px;'>
-    <div style='font-size:1.8rem; margin-bottom:8px;'>[JD]</div>
-    <div style='font-weight:700; color:#e0e0ff; margin-bottom:6px;'>Paste Your JD</div>
-    <div style='color:#888; font-size:0.85rem;'>Paste any job description and get a perfectly tailored resume in seconds.</div>
+    <div class='rf-feature'>
+    <div class='rf-feature-icon'>JD</div>
+    <div class='rf-feature-title'>Paste Your JD</div>
+    <div class='rf-feature-desc'>Paste any job description and get a perfectly tailored resume in seconds.</div>
     </div>""", unsafe_allow_html=True)
 
 with f2:
     st.markdown("""
-    <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
-    border-radius:12px; padding:20px; min-height:140px;'>
-    <div style='font-size:1.8rem; margin-bottom:8px;'>[ATS]</div>
-    <div style='font-weight:700; color:#e0e0ff; margin-bottom:6px;'>ATS-Optimized</div>
-    <div style='color:#888; font-size:0.85rem;'>Keyword-aligned resumes that pass ATS filters with gap analysis and scoring.</div>
+    <div class='rf-feature'>
+    <div class='rf-feature-icon'>ATS</div>
+    <div class='rf-feature-title'>ATS-Optimized</div>
+    <div class='rf-feature-desc'>Keyword-aligned resumes that pass ATS filters with gap analysis and scoring.</div>
     </div>""", unsafe_allow_html=True)
 
 with f3:
     st.markdown("""
-    <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
-    border-radius:12px; padding:20px; min-height:140px;'>
-    <div style='font-size:1.8rem; margin-bottom:8px;'>[DB]</div>
-    <div style='font-weight:700; color:#e0e0ff; margin-bottom:6px;'>Your Knowledge Base</div>
-    <div style='color:#888; font-size:0.85rem;'>Secure, private vector database just for your data.</div>
+    <div class='rf-feature'>
+    <div class='rf-feature-icon'>KB</div>
+    <div class='rf-feature-title'>Your Knowledge Base</div>
+    <div class='rf-feature-desc'>Secure, private vector database just for your data.</div>
     </div>""", unsafe_allow_html=True)
 
 st.markdown("---")
 
 # Quick Start
-st.markdown("## Quick Start")
+st.markdown("## Quick start")
 st.markdown("""
 1. **Manage your Knowledge Base** — Add your skills, experience, and projects in the Manage KB page.
 2. **Run Ingestion** — Click "Rebuild Vector DB" to index your data.

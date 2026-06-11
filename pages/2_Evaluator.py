@@ -39,7 +39,7 @@ if "user" not in st.session_state or st.session_state.user is None:
 user_id = st.session_state.user['id']
 
 # ─── Header ─────────────────────────────────────────────────────────────────
-st.markdown("# 🧪 RAG Evaluator")
+st.markdown("# RAG Evaluator")
 st.markdown("Tune retrieval parameters and inspect chunk quality for your queries.")
 
 if "is_locked" not in st.session_state:
@@ -55,7 +55,7 @@ st.markdown("---")
 
 
 # ─── Parameters ─────────────────────────────────────────────────────────────
-st.markdown("## ⚙️ RAG Parameters")
+st.markdown("## RAG Parameters")
 
 param_col1, param_col2, param_col3, param_col4 = st.columns(4)
 
@@ -106,7 +106,7 @@ with param_col4:
 # ─── Re-Ingest with Custom Params ──────────────────────────────────────────
 st.markdown("---")
 
-if st.button("🔄 Re-Ingest with These Parameters", type="secondary", key="eval_reingest", disabled=is_locked, help=lock_help):
+if st.button("Re-Ingest with These Parameters", type="secondary", key="eval_reingest", disabled=is_locked, help=lock_help):
     with st.spinner("Re-ingesting knowledge base with custom parameters..."):
         try:
             stats = run_ingestion(
@@ -116,16 +116,16 @@ if st.button("🔄 Re-Ingest with These Parameters", type="secondary", key="eval
                 embedding_model=EMBEDDING_MODELS[eval_embedding],
             )
             st.success(
-                f"✅ Re-ingestion complete! "
+                f"Re-ingestion complete! "
                 f"{stats['chunks_created']} chunks → {stats['vectors_stored']} vectors"
             )
         except Exception as e:
-            st.error(f"❌ Re-ingestion failed: {str(e)}")
+            st.error(f"Re-ingestion failed: {str(e)}")
 
 
 # ─── Query Test ─────────────────────────────────────────────────────────────
 st.markdown("---")
-st.markdown("## 🔍 Retrieval Test")
+st.markdown("## Retrieval Test")
 
 test_query = st.text_area(
     "Enter a test query or JD snippet",
@@ -136,11 +136,11 @@ test_query = st.text_area(
     help=lock_help
 )
 
-if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=is_locked or not test_query, help=lock_help):
+if st.button("Test Retrieval", type="primary", key="eval_search", disabled=is_locked or not test_query, help=lock_help):
     chunk_count = get_chunk_count_for_user(user_id)
 
     if chunk_count == 0:
-        st.warning("⚠️ Vector database is empty. Run ingestion first.")
+        st.warning("Vector database is empty. Run ingestion first.")
     else:
         with st.spinner("Retrieving relevant chunks..."):
             try:
@@ -154,7 +154,7 @@ if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=
                 # Lock features after evaluation
                 st.session_state.is_locked = True
 
-                st.success(f"✅ Retrieved {len(results)} chunks")
+                st.success(f"Retrieved {len(results)} chunks")
 
                 # Metrics
                 if results:
@@ -172,43 +172,30 @@ if st.button("🔎 Test Retrieval", type="primary", key="eval_search", disabled=
                     doc_type = doc.metadata.get("doc_type", "unknown")
 
                     # Color code by score
-                    if score > 0.5:
-                        badge_color = "#00c853"
-                        badge_bg = "rgba(0,200,83,0.1)"
-                    elif score > 0.3:
-                        badge_color = "#ffab00"
-                        badge_bg = "rgba(255,171,0,0.1)"
-                    else:
-                        badge_color = "#ff6b6b"
-                        badge_bg = "rgba(255,107,107,0.1)"
+                    pill_class = "rf-pill-green" if score > 0.5 else "rf-pill-amber" if score > 0.3 else "rf-pill-red"
 
                     with st.container():
                         st.markdown(
-                            f"<div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); "
-                            f"border-radius:12px; padding:16px; margin-bottom:12px;'>"
-                            f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>"
-                            f"<span style='font-weight:700; color:#e0e0ff;'>#{i}</span>"
-                            f"<span style='background:rgba(123,47,247,0.15); color:#b0b0d0; padding:2px 10px; "
-                            f"border-radius:12px; font-size:0.8rem;'>{doc_type}</span>"
-                            f"<span style='background:{badge_bg}; color:{badge_color}; padding:2px 10px; "
-                            f"border-radius:12px; font-size:0.8rem; font-weight:600;'>Score: {score:.4f}</span>"
+                            f"<div class='rf-chunk'>"
+                            f"<div class='rf-chunk-head'>"
+                            f"<span class='rf-chunk-rank'>#{i}</span>"
+                            f"<span class='rf-pill'>{doc_type}</span>"
+                            f"<span class='rf-pill {pill_class}'>Score: {score:.4f}</span>"
                             f"</div>"
-                            f"<div style='color:#b0b0d0; font-size:0.88rem; line-height:1.5;'>"
-                            f"{doc.page_content}</div>"
+                            f"<div class='rf-chunk-body'>{doc.page_content}</div>"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
 
             except Exception as e:
-                st.error(f"❌ Retrieval failed: {str(e)}")
+                st.error(f"Retrieval failed: {str(e)}")
 
 # ─── Empty State ────────────────────────────────────────────────────────────
 if not test_query:
     st.markdown(
-        "<div style='text-align:center; padding:60px 20px; color:rgba(255,255,255,0.3);'>"
-        "<div style='font-size:3rem; margin-bottom:10px;'>🧪</div>"
-        "<div style='font-size:1.1rem;'>Enter a query above to test retrieval</div>"
-        "<div style='font-size:0.85rem; margin-top:8px;'>"
+        "<div class='rf-empty'>"
+        "<div class='rf-empty-title'>Enter a query above to test retrieval</div>"
+        "<div class='rf-empty-sub'>"
         "Adjust parameters to see how chunk size, overlap, and top-K affect results"
         "</div></div>",
         unsafe_allow_html=True,

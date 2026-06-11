@@ -36,7 +36,7 @@ st.markdown("# Manage Documents")
 st.markdown("Centralized management for your local documents and cloud storage folders.")
 st.markdown("---")
 
-tab_local, tab_cloud = st.tabs(["📁 Local Documents", "☁️ Cloud Folders"])
+tab_local, tab_cloud = st.tabs(["Local Documents", "Cloud Folders"])
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB: Local Documents
@@ -140,14 +140,14 @@ with tab_cloud:
         st.info("No cloud folders linked yet.")
     else:
         for link in links:
-            with st.expander(f"☁️ {link['name']} ({link['provider']})", expanded=False):
+            with st.expander(f"{link['name']} ({link['provider']})", expanded=False):
                 col1, col2 = st.columns([5, 1])
                 col1.caption(f"URL: {link['folder_link']}")
                 if col2.button("Remove Link", key=f"rem_{link['id']}"):
                     delete_cloud_link(link['id'], user_id)
                     st.rerun()
                 
-                if st.button(f"🔍 Scan {link['name']}", key=f"scan_{link['id']}"):
+                if st.button(f"Scan {link['name']}", key=f"scan_{link['id']}"):
                     st.session_state[f"scan_results_{link['id']}"] = True
                 
                 if st.session_state.get(f"scan_results_{link['id']}"):

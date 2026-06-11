@@ -27,29 +27,13 @@ if st.session_state.user['role'] != 'admin':
     st.stop()
 
 # ─── Main Content ──────────────────────────────────────────────────────────
-st.markdown("# 👑 Admin Dashboard")
+st.markdown("# Admin Dashboard")
 st.markdown("System-wide metrics and user management.")
 st.markdown("---")
 
 # Metrics
 total_users = get_total_users()
 total_resumes = get_total_resumes_generated()
-
-st.markdown("""
-<style>
-/* Make metric cards smaller and cleaner */
-div[data-testid="stMetric"] {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 1rem;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-}
-div[data-testid="stMetricValue"] {
-    font-size: 24px !important;
-}
-</style>
-""", unsafe_allow_html=True)
 
 m1, m2, m3 = st.columns(3)
 m1.metric("Total Users", total_users)
@@ -89,7 +73,7 @@ if users:
         st.write(f"Showing **{len(user_resumes)}** resumes for **{selected_user_email}**")
         
         for resume in user_resumes:
-            with st.expander(f"📄 {resume['job_role']} — {resume['created_at'][:16]}"):
+            with st.expander(f"{resume['job_role']} — {resume['created_at'][:16]}"):
                 col_info, col_actions = st.columns([3, 1])
                 
                 with col_info:

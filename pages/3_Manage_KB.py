@@ -34,7 +34,7 @@ CATEGORIES = ["projects", "experience", "skills", "education", "certifications",
 if "kb_action" not in st.session_state:
     st.session_state.kb_action = None  # None, 'add'
 
-st.markdown("### 🤖 Auto-Fill from Resume (AI Assisted)")
+st.markdown("### Auto-Fill from Resume (AI Assisted)")
 st.markdown("Upload your resume to automatically extract and populate your Knowledge Base.")
 
 with st.expander("Auto-Fill Options", expanded=False):
@@ -225,7 +225,7 @@ else:
                 for entry in cat_entries:
                     st.markdown(f"#### {entry['title']}")
                     if entry['github_url']:
-                        st.markdown(f"**🔗 [View Project]({entry['github_url']})**")
+                        st.markdown(f"**[View Project]({entry['github_url']})**")
                     st.markdown(entry['content'])
                     
                     if st.button("Delete", key=f"del_{entry['id']}", type="secondary"):
@@ -252,4 +252,4 @@ else:
                     st.markdown("---")
 
 st.markdown("---")
-st.info("💡 **Tip**: After updating your Knowledge Base, go to **Generate Resume** and click **Rebuild Vector DB** to apply the changes.")
+st.info("**Tip**: After updating your Knowledge Base, go to **Generate Resume** and click **Rebuild Vector DB** to apply the changes.")

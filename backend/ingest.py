@@ -18,7 +18,7 @@ from backend.config import (
     CHUNK_SIZE,
     CHUNK_OVERLAP,
 )
-from backend.database import get_kb_entries
+from backend.database import get_kb_entries, get_kb_documents, update_kb_document_stats
 
 def get_user_vector_dir(user_id: int) -> str:
     """Get the specific FAISS directory for a user."""
@@ -76,11 +76,46 @@ def check_kb_changes(user_id: int) -> dict:
         "total_files": len(entries),
     }
 
+def _extract_text_from_file(file_path: str, file_type: str) -> str:
+    """Extract plain text from PDF, TXT, or MD files."""
+    if not os.path.exists(file_path):
+        return ""
+        
+    ext = file_path.lower().split('.')[-1]
+    text = ""
+    
+    if ext == 'pdf' or 'pdf' in file_type:
+        try:
+            import pypdf
+            pdf_reader = pypdf.PdfReader(file_path)
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        except Exception as e:
+            print(f"Error parsing PDF file {file_path}: {e}")
+    elif ext in ['txt', 'md', 'markdown'] or 'text' in file_type:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        except Exception as e:
+            print(f"Error reading text file {file_path}: {e}")
+    else:
+        # Fallback to reading as text
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        except Exception:
+            pass
+            
+    return text.strip()
+
 def fetch_documents(user_id: int) -> list:
-    """Load all markdown entries from SQLite for this user."""
+    """Load all entries and documents from SQLite for this user."""
     entries = get_kb_entries(user_id)
     documents = []
 
+    # 1. Load structured KB entries
     for entry in entries:
         content = f"# {entry['title']}\n"
         if entry['github_url']:
@@ -97,7 +132,25 @@ def fetch_documents(user_id: int) -> list:
         )
         documents.append(doc)
 
-    print(f"Loaded {len(documents)} entries for user {user_id}")
+    # 2. Load uploaded KB documents
+    kb_docs = get_kb_documents(user_id)
+    for doc_item in kb_docs:
+        file_path = doc_item["file_path"]
+        if os.path.exists(file_path):
+            text = _extract_text_from_file(file_path, doc_item["file_type"])
+            if text:
+                content = f"# DOCUMENT: {doc_item['file_name']}\n\n{text}"
+                doc = Document(
+                    page_content=content,
+                    metadata={
+                        "doc_type": "document",
+                        "title": doc_item["file_name"],
+                        "github_url": ""
+                    }
+                )
+                documents.append(doc)
+
+    print(f"Loaded {len(documents)} total documents for user {user_id}")
     return documents
 
 def create_chunks(
@@ -171,6 +224,19 @@ def run_ingestion(
             "chunk_overlap": chunk_overlap,
             "embedding_model": embedding_model,
         }
+        
+        # Count chunks per document and update stats in DB
+        doc_chunk_counts = {}
+        for chunk in chunks:
+            if chunk.metadata.get("doc_type") == "document":
+                doc_title = chunk.metadata.get("title")
+                doc_chunk_counts[doc_title] = doc_chunk_counts.get(doc_title, 0) + 1
+                
+        kb_docs = get_kb_documents(user_id)
+        for kb_doc in kb_docs:
+            title = kb_doc["file_name"]
+            count = doc_chunk_counts.get(title, 0)
+            update_kb_document_stats(kb_doc["id"], user_id, count, embedding_model)
 
     # Save metadata for versioning
     _save_kb_metadata(user_id, stats)

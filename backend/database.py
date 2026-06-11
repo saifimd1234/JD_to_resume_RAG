@@ -111,6 +111,63 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
         """)
+
+        # Create kb_documents table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS kb_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            file_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            chunk_count INTEGER DEFAULT 0,
+            embedding_model TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """)
+
+        # Create section_prompts table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS section_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            section_key TEXT NOT NULL,
+            prompt_text TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, section_key),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """)
+
+        # Create chat_conversations table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            is_pinned INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """)
+
+        # Create chat_messages table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            model_used TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cost REAL DEFAULT 0.0,
+            retrieved_chunks TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES chat_conversations (id) ON DELETE CASCADE
+        )
+        """)
         
         conn.commit()
 
@@ -476,6 +533,171 @@ def delete_cloud_link(link_id: int, user_id: int):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM user_cloud_links WHERE id = ? AND user_id = ?", (link_id, user_id))
         conn.commit()
+
+
+# ─── KB Documents Functions ──────────────────────────────────────────────────
+
+def add_kb_document(user_id: int, file_name: str, file_path: str, file_type: str):
+    """Add a new knowledge base document record."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO kb_documents (user_id, file_name, file_path, file_type)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, file_name, file_path, file_type))
+        conn.commit()
+        return cursor.lastrowid
+
+def get_kb_documents(user_id: int):
+    """Retrieve all knowledge base documents for a user."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM kb_documents WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def delete_kb_document(doc_id: int, user_id: int):
+    """Delete a knowledge base document record and the file on disk."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM kb_documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        doc = cursor.fetchone()
+        if doc:
+            try:
+                if os.path.exists(doc['file_path']):
+                    os.remove(doc['file_path'])
+            except Exception:
+                pass
+            cursor.execute("DELETE FROM kb_documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+            conn.commit()
+            return True
+        return False
+
+def update_kb_document_stats(doc_id: int, user_id: int, chunk_count: int, embedding_model: str):
+    """Update stats for a knowledge base document after ingestion."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE kb_documents
+            SET chunk_count = ?, embedding_model = ?
+            WHERE id = ? AND user_id = ?
+        """, (chunk_count, embedding_model, doc_id, user_id))
+        conn.commit()
+
+
+# ─── Section Prompts Functions ────────────────────────────────────────────────
+
+def get_section_prompts(user_id: int) -> dict:
+    """Get all section prompts for a user, falling back to defaults if not set."""
+    from backend.prompts import DEFAULT_SECTION_PROMPTS
+    
+    prompts = DEFAULT_SECTION_PROMPTS.copy()
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT section_key, prompt_text FROM section_prompts WHERE user_id = ?", (user_id,))
+        rows = cursor.fetchall()
+        for row in rows:
+            prompts[row["section_key"]] = row["prompt_text"]
+            
+    return prompts
+
+def update_section_prompt(user_id: int, section_key: str, prompt_text: str):
+    """Save/update a custom prompt for a section."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO section_prompts (user_id, section_key, prompt_text, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, section_key) DO UPDATE SET
+                prompt_text = excluded.prompt_text,
+                updated_at = excluded.updated_at
+        """, (user_id, section_key, prompt_text, datetime.now()))
+        conn.commit()
+
+
+# ─── Chat Functions ───────────────────────────────────────────────────────────
+
+def create_conversation(user_id: int, title: str) -> int:
+    """Create a new chat conversation."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO chat_conversations (user_id, title) VALUES (?, ?)", (user_id, title))
+        conn.commit()
+        return cursor.lastrowid
+
+def get_conversations(user_id: int):
+    """Retrieve all conversations for a user, sorted by pinned first, then newest."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM chat_conversations 
+            WHERE user_id = ? 
+            ORDER BY is_pinned DESC, created_at DESC
+        """, (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def delete_conversation(conv_id: int, user_id: int):
+    """Delete a conversation and its messages."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        # Verify ownership
+        cursor.execute("SELECT id FROM chat_conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+        if cursor.fetchone():
+            cursor.execute("DELETE FROM chat_messages WHERE conversation_id = ?", (conv_id,))
+            cursor.execute("DELETE FROM chat_conversations WHERE id = ?", (conv_id,))
+            conn.commit()
+            return True
+        return False
+
+def rename_conversation(conv_id: int, title: str, user_id: int):
+    """Rename a conversation."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE chat_conversations
+            SET title = ?
+            WHERE id = ? AND user_id = ?
+        """, (title, conv_id, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def pin_conversation(conv_id: int, is_pinned: bool, user_id: int):
+    """Pin/unpin a conversation."""
+    pinned_val = 1 if is_pinned else 0
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE chat_conversations
+            SET is_pinned = ?
+            WHERE id = ? AND user_id = ?
+        """, (pinned_val, conv_id, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def add_chat_message(conversation_id: int, role: str, content: str, model_used: str = None, 
+                     input_tokens: int = 0, output_tokens: int = 0, cost: float = 0.0, 
+                     retrieved_chunks: str = None):
+    """Add a new message to a conversation."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO chat_messages (conversation_id, role, content, model_used, input_tokens, output_tokens, cost, retrieved_chunks)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (conversation_id, role, content, model_used, input_tokens, output_tokens, cost, retrieved_chunks))
+        conn.commit()
+        return cursor.lastrowid
+
+def get_chat_messages(conversation_id: int):
+    """Retrieve all messages for a conversation, sorted chronologically."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC", (conversation_id,))
+        return [dict(row) for row in cursor.fetchall()]
 
 
 

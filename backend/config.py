@@ -29,9 +29,9 @@ PUBLIC_DIR = ROOT_DIR / "public"
 
 # ─── OpenAI Models ──────────────────────────────────────────────────────────
 GENERATION_MODELS = {
-    "gpt-4.1-nano (Fast & Cheap)": "gpt-4.1-nano",
-    "gpt-4.1-mini (Balanced)": "gpt-4.1-mini",
-    "gpt-4.1 (Best Quality)": "gpt-4.1",
+    "gpt-4o-mini (Fast & Cheap)": "gpt-4o-mini",
+    "gpt-3.5-turbo (Balanced)": "gpt-3.5-turbo",
+    "gpt-4o (Best Quality)": "gpt-4o",
 }
 
 EMBEDDING_MODELS = {
@@ -40,7 +40,7 @@ EMBEDDING_MODELS = {
 }
 
 # Defaults
-DEFAULT_GENERATION_MODEL = "gpt-4.1-nano"
+DEFAULT_GENERATION_MODEL = "gpt-4o-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"
 
 # ─── RAG Parameters ─────────────────────────────────────────────────────────
@@ -49,15 +49,23 @@ CHUNK_OVERLAP = 200
 RETRIEVAL_K = 10
 
 # ─── Resume Templates ───────────────────────────────────────────────────────
+TEMPLATES_DIR = ROOT_DIR / "templates"
+
 RESUME_TEMPLATES = {
-    "Minimal": "minimal",
-    "Corporate": "corporate",
-    "Modern": "modern",
+    "Harvard Resume": "harvard_resume",
+    "ATS Professional": "ats_professional",
+    "Modern Executive": "modern_executive",
+    "Minimal Corporate": "minimal_corporate",
+    "Software Engineer Template": "software_engineer",
 }
 
 # Template PDF previews (stored in public/)
 TEMPLATE_PREVIEWS = {
-    "Corporate": "corporate.pdf",
+    "Harvard Resume": "harvard_resume.pdf",
+    "ATS Professional": "ats_professional.pdf",
+    "Modern Executive": "modern_executive.pdf",
+    "Minimal Corporate": "minimal_corporate.pdf",
+    "Software Engineer Template": "software_engineer.pdf",
 }
 
 # ─── Constraints ─────────────────────────────────────────────────────────────

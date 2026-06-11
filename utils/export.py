@@ -35,6 +35,10 @@ def _parse_markdown_lines(text: str) -> list[dict]:
             parsed.append({"type": "h1", "content": stripped[2:]})
         elif stripped.startswith("- ") or stripped.startswith("* "):
             parsed.append({"type": "bullet", "content": stripped[2:]})
+        elif stripped == "--- PAGE BREAK ---":
+            parsed.append({"type": "page_break", "content": ""})
+        elif stripped == "<Content>":
+            parsed.append({"type": "attachment_content", "content": ""})
         elif stripped.startswith("---"):
             parsed.append({"type": "hr", "content": ""})
         else:
@@ -142,6 +146,8 @@ def export_to_docx(resume_text: str, attachments: list = None) -> bytes:
 
     parsed = _parse_markdown_lines(resume_text)
 
+    attachment_idx = 0
+
     for item in parsed:
         if item["type"] == "h1":
             p = doc.add_paragraph()
@@ -192,33 +198,26 @@ def export_to_docx(resume_text: str, attachments: list = None) -> bytes:
             p = doc.add_paragraph()
             p.space_before = Pt(2)
             p.space_after = Pt(2)
-
-        # Skip empty lines (just add spacing)
-
-    # Handle attachments
-    if attachments:
-        import os
-        for doc_info in attachments:
-            file_path = doc_info.get("file_path")
-            if not file_path or not os.path.exists(file_path):
-                continue
-                
-            doc.add_page_break()
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(f"Attachment: {doc_info.get('title', 'Document')}")
-            run.bold = True
             
-            ext = file_path.lower().split('.')[-1]
-            if ext in ['png', 'jpg', 'jpeg']:
-                try:
-                    doc.add_picture(file_path, width=Inches(6.0))
-                except Exception:
-                    doc.add_paragraph("[Image rendering failed]")
-            elif ext == 'pdf':
-                doc.add_paragraph("[PDF attached. Please refer to the PDF export for full visual inclusion or view original file.]")
-            else:
-                doc.add_paragraph(f"[Attached File: {doc_info.get('title')}]")
+        elif item["type"] == "page_break":
+            doc.add_page_break()
+            
+        elif item["type"] == "attachment_content":
+            if attachments and attachment_idx < len(attachments):
+                doc_info = attachments[attachment_idx]
+                file_path = doc_info.get("file_path")
+                if file_path and __import__("os").path.exists(file_path):
+                    ext = file_path.lower().split('.')[-1]
+                    if ext in ['png', 'jpg', 'jpeg']:
+                        try:
+                            doc.add_picture(file_path, width=Inches(6.0))
+                        except Exception:
+                            doc.add_paragraph("[Image rendering failed]")
+                    elif ext == 'pdf':
+                        doc.add_paragraph("[PDF attached. Please refer to the PDF export for full visual inclusion or view original file.]")
+                    else:
+                        doc.add_paragraph(f"[Attached File: {doc_info.get('title')}]")
+                attachment_idx += 1
 
     # Save to bytes
     buffer = io.BytesIO()
@@ -261,17 +260,8 @@ def export_to_pdf(resume_text: str, attachments: list = None) -> bytes:
     pdf.add_page()
     pdf.set_margins(15, 15, 15)
 
-    # Clean the markdown text to make it more fpdf2 write_html friendly
-    # Remove excessive horizontal rules which fpdf2 struggles with
-    clean_text = resume_text.replace("---", "")
-    
-    # Convert Markdown to HTML
-    # We use a custom processor or simple regex to ensure raw URLs are clickable in PDF
-    url_pattern = r'(?<!href=")(https?://[^\s<]+)'
-    html_text = markdown.markdown(clean_text)
-    
-    # Wrap raw URLs in <a> tags for PDF
-    html_content = re.sub(url_pattern, r'<a href="\1">\1</a>', html_text)
+    # Split text into pages based on our custom page break marker
+    pages = resume_text.split("--- PAGE BREAK ---")
 
     # Basic CSS for fpdf2 to understand formatting
     html_header = """
@@ -285,15 +275,26 @@ def export_to_pdf(resume_text: str, attachments: list = None) -> bytes:
     </style>
     """
 
-    
-    full_html = html_header + html_content
-    
-    try:
-        pdf.write_html(full_html)
-    except Exception as e:
-        # Fallback to simple text if HTML parsing fails
-        pdf.set_font("Helvetica", size=10)
-        pdf.multi_cell(0, 5, resume_text.encode('latin-1', 'replace').decode('latin-1'))
+    for i, page_text in enumerate(pages):
+        if i > 0:
+            pdf.add_page()
+            
+        # Clean the markdown text
+        clean_text = page_text.replace("---", "").replace("<Content>", "")
+        
+        # Convert Markdown to HTML
+        url_pattern = r'(?<!href=")(https?://[^\s<]+)'
+        html_text = markdown.markdown(clean_text)
+        html_content = re.sub(url_pattern, r'<a href="\1">\1</a>', html_text)
+        
+        full_html = html_header + html_content
+        
+        try:
+            pdf.write_html(full_html)
+        except Exception as e:
+            # Fallback to simple text if HTML parsing fails
+            pdf.set_font("Helvetica", size=10)
+            pdf.multi_cell(0, 5, clean_text.encode('latin-1', 'replace').decode('latin-1'))
         
     # Save to bytes
     buffer = io.BytesIO()

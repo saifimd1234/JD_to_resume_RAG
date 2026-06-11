@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 
 from backend.config import DEFAULT_GENERATION_MODEL, RETRIEVAL_K, DEFAULT_EMBEDDING_MODEL
 from backend.retriever import retrieve_relevant_chunks, retrieve_with_scores
-from backend.prompts import STYLE_INSTRUCTIONS, SYSTEM_PROMPT, CV_SYSTEM_PROMPT, USER_PROMPT
+from backend.prompts import STYLE_INSTRUCTIONS, GENERATOR_SYSTEM_PROMPT, USER_PROMPT
 
 # ─── Helper Functions ───────────────────────────────────────────────────────
 
@@ -91,6 +91,7 @@ def generate_resume(
     retrieval_k: int = RETRIEVAL_K,
     contact_details: dict = None,
     doc_type: str = "resume",
+    attachments: list = None,
 ) -> dict:
     """
     Generate a tailored resume from a JD using RAG.
@@ -105,10 +106,12 @@ def generate_resume(
         retrieval_k: Number of chunks to retrieve
         contact_details: Dict with name, email, phone, location, linkedin, github
         doc_type: "resume" or "cv"
+        attachments: List of attachments
 
     Returns:
         dict with keys: resume_text, retrieved_chunks, metadata
     """
+    import json
     # 1. Retrieve relevant chunks from KB
     scored_results = retrieve_with_scores(
         user_id,
@@ -130,25 +133,79 @@ def generate_resume(
     style_instructions = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS["corporate"])
 
     # 5. Construct messages
-    base_prompt = CV_SYSTEM_PROMPT if doc_type == "cv" else SYSTEM_PROMPT
+    from backend.prompts import GENERATOR_SYSTEM_PROMPT
+    from backend.database import get_section_prompts
     
-    system_message = base_prompt.format(
-        context=context,
-        style_instructions=style_instructions,
-        contact_info=contact_info,
-    )
+    attachments_list = [d.get("title") for d in attachments] if attachments else []
+    
+    json_input_dict = {
+        "user_data": {
+            "contact_info": contact_info,
+            "background": context
+        },
+        "job_description": jd_text,
+        "template_structure": style_instructions,
+        "document_type": doc_type,
+        "attachments": attachments_list
+    }
+
+    # Add safety clause to custom prompt to protect EXPERIENCE/PROJECTS from skill injection contamination
+    safe_custom_prompt = custom_prompt
+    if custom_prompt and "INJECT THE FOLLOWING SKILLS" in custom_prompt:
+        safe_custom_prompt += (
+            "\n\nCRITICAL SAFETY RULE: You are asked to inject skills. You must ONLY add these injected skills "
+            "to the SKILLS and/or PROFILE sections. DO NOT modify the bullet points, descriptions, technologies, "
+            "or details of the EXPERIENCE or PROJECTS sections to add these skills, unless they are already "
+            "present in the candidate's background data for those sections. Maintain historical accuracy for "
+            "all projects and experiences."
+        )
 
     custom_section = ""
-    if custom_prompt.strip():
-        custom_section = f"\n\n## ADDITIONAL INSTRUCTIONS:\n{custom_prompt}"
+    if safe_custom_prompt.strip():
+        custom_section = f"\n\n## ADDITIONAL INSTRUCTIONS:\n{safe_custom_prompt}"
 
     user_message = USER_PROMPT.format(
-        jd_text=jd_text,
+        json_input=json.dumps(json_input_dict, indent=2),
         custom_prompt=custom_section,
     )
 
+    # Fetch customized section prompts
+    sp = get_section_prompts(user_id)
+    section_instructions = f"""
+-----------------------------------
+📌 SECTION-SPECIFIC INSTRUCTIONS (CRITICAL)
+-----------------------------------
+For each section of the document, you MUST follow these specific customization rules:
+
+- PROFILE / SUMMARY:
+{sp.get('profile', '')}
+
+- EDUCATION:
+{sp.get('education', '')}
+
+- SKILLS:
+{sp.get('skills', '')}
+
+- CERTIFICATIONS:
+{sp.get('certifications', '')}
+
+- EXPERIENCE:
+{sp.get('experience', '')}
+
+- PROJECTS:
+{sp.get('projects', '')}
+
+- ACHIEVEMENTS:
+{sp.get('achievements', '')}
+"""
+
+    system_prompt_content = GENERATOR_SYSTEM_PROMPT + "\n" + section_instructions
+    if doc_type != "cv":
+        import re
+        system_prompt_content = re.sub(r"-{30,}\n📌 ATTACHMENTS HANDLING.*?(?=-{30,}\n📌)", "", system_prompt_content, flags=re.DOTALL)
+
     messages = [
-        SystemMessage(content=system_message),
+        SystemMessage(content=system_prompt_content),
         HumanMessage(content=user_message),
     ]
 
@@ -191,7 +248,8 @@ def generate_job_description(
         "You are an expert technical recruiter and hiring manager. "
         "Your task is to write a comprehensive, ATS-friendly Job Description for the given job role. "
         "Include a brief summary, key responsibilities, required skills (both technical and soft skills), "
-        "and qualifications. Format the output in clean Markdown."
+        "and qualifications. Format the output in clean Markdown. "
+        "ALWAYS display the FULL job description. NEVER truncate the output or use placeholders like 'character limit reached'."
     )
     user_prompt = f"Generate a detailed Job Description for the role: {job_role}"
     
@@ -254,4 +312,43 @@ def parse_resume_to_kb(
         return json.loads(content)
     except json.JSONDecodeError:
         return []
+
+def refine_resume(
+    current_resume_text: str,
+    refinement_prompt: str,
+    jd_text: str = None,
+    generation_model: str = DEFAULT_GENERATION_MODEL
+) -> str:
+    """
+    Refine the current resume using AI based on user refinement instructions.
+    """
+    llm = _get_llm(generation_model)
+    
+    system_prompt = (
+        "You are an expert resume writer. "
+        "Your task is to refine and update the candidate's current resume based on their specific refinement request. "
+        "You must preserve the original formatting, headings, structure, and style of the resume. "
+        "Apply only the requested changes, edits, or additions. Keep unchanged sections exactly as they are. "
+        "Return the updated resume in clean Markdown format."
+    )
+    
+    user_prompt = f"""
+CURRENT RESUME:
+```markdown
+{current_resume_text}
+```
+
+REFINEMENT REQUEST:
+{refinement_prompt}
+"""
+    if jd_text:
+        user_prompt += f"\n\nTARGET JOB DESCRIPTION (for reference/tailoring):\n{jd_text}"
+        
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt),
+    ]
+    
+    response = llm.invoke(messages)
+    return response.content
 

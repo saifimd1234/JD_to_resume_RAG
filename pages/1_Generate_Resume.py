@@ -164,12 +164,16 @@ st.markdown("## Job Information")
 
 job_role = st.text_input("Target Job Role *", placeholder="e.g., Senior Data Engineer", key="job_role_input")
 
-if st.button("✨ Auto-Generate Job Description", disabled=not job_role.strip()):
+if st.button("Auto-Generate Job Description", disabled=not job_role.strip()):
     with st.spinner("Generating relevant job description..."):
         from backend.generator import generate_job_description
         gen_m = st.session_state.get("gen_m", list(cfg.GENERATION_MODELS.keys())[0])
-        st.session_state.jd_input_text = generate_job_description(job_role, cfg.GENERATION_MODELS[gen_m])
-        st.rerun()
+        try:
+            st.session_state.jd_input_text = generate_job_description(job_role, cfg.GENERATION_MODELS[gen_m])
+            st.rerun()
+        except Exception as e:
+            st.error(f"API Error: {e}")
+            st.info("Tip: If you are seeing an APIConnectionError, please check your internet connection or VPN. If you are in a region where OpenAI is restricted, you may need a proxy.")
 
 jd_text_widget = st.text_area(
     "Paste Job Description *",
@@ -184,7 +188,7 @@ st.session_state.jd_input_text = jd_text_widget
 jd_text = jd_text_widget
 
 char_count = len(jd_text) if jd_text else 0
-color = "#00c853" if char_count < cfg.MAX_JD_CHARACTERS * 0.9 else "#ff6b6b"
+color = "#16A34A" if char_count < cfg.MAX_JD_CHARACTERS * 0.9 else "#DC2626"
 st.markdown(
     f"<div style='text-align:right; color:{color}; font-size:0.8rem; margin-top:-10px;'>"
     f"{char_count:,} / {cfg.MAX_JD_CHARACTERS:,} characters</div>",
@@ -209,15 +213,41 @@ if st.session_state.doc_type == "cv":
         selected_doc_names = st.multiselect("Select documents to attach to your CV (Order is preserved)", list(doc_options.keys()))
         
         if selected_doc_names:
-            st.session_state.selected_attachments = [doc_options[name] for name in selected_doc_names]
-            with st.expander("Preview Attached Documents", expanded=True):
-                for i, doc in enumerate(st.session_state.selected_attachments, 1):
-                    st.markdown(f"{i}. **{doc['title']}**")
+            current_selected_ids = [doc['id'] for doc in st.session_state.get('ordered_attachments', [])]
+            new_selected_ids = [doc_options[name]['id'] for name in selected_doc_names]
+            
+            if set(current_selected_ids) != set(new_selected_ids):
+                new_ordered = [doc for doc in st.session_state.get('ordered_attachments', []) if doc['id'] in new_selected_ids]
+                for name in selected_doc_names:
+                    doc = doc_options[name]
+                    if doc['id'] not in current_selected_ids:
+                        new_ordered.append(doc)
+                st.session_state.ordered_attachments = new_ordered
+            elif 'ordered_attachments' not in st.session_state:
+                st.session_state.ordered_attachments = [doc_options[name] for name in selected_doc_names]
+            
+            st.markdown("#### Ordered Attachments")
+            st.caption("Use arrows to reorder before generation.")
+            for i, doc in enumerate(st.session_state.ordered_attachments):
+                col1, col2, col3, col4 = st.columns([0.1, 0.7, 0.1, 0.1])
+                col1.write(f"{i+1}.")
+                col2.write(f"**{doc['title']}**")
+                
+                if col3.button("↑", key=f"up_{doc['id']}", disabled=(i == 0)):
+                    st.session_state.ordered_attachments[i-1], st.session_state.ordered_attachments[i] = st.session_state.ordered_attachments[i], st.session_state.ordered_attachments[i-1]
+                    st.rerun()
+                if col4.button("↓", key=f"down_{doc['id']}", disabled=(i == len(st.session_state.ordered_attachments)-1)):
+                    st.session_state.ordered_attachments[i+1], st.session_state.ordered_attachments[i] = st.session_state.ordered_attachments[i], st.session_state.ordered_attachments[i+1]
+                    st.rerun()
+            
+            st.session_state.selected_attachments = st.session_state.ordered_attachments
         else:
             st.session_state.selected_attachments = []
+            st.session_state.ordered_attachments = []
             st.warning("Some documents are missing. Would you like to upload now?")
     else:
         st.session_state.selected_attachments = []
+        st.session_state.ordered_attachments = []
         st.warning("You have no uploaded documents. Would you like to upload one now?")
         
     if not user_docs or not selected_doc_names:
@@ -275,6 +305,25 @@ with st.expander("Upload Existing Resume (Optional)"):
     if uploaded_resume:
         st.info("Resume uploaded — will be used as reference for generation.")
 
+# Centralized section prompts configuration
+with st.expander("Customize Section Prompts (Optional)"):
+    from backend.database import get_section_prompts, update_section_prompt
+    st.markdown("Edit the prompt instructions for each section of your resume to customize how the LLM generates them:")
+    
+    custom_sp = get_section_prompts(user_id)
+    
+    for section_key, default_text in custom_sp.items():
+        edited_prompt = st.text_area(
+            f"{section_key.upper()} Prompt",
+            value=default_text,
+            height=85,
+            key=f"sp_editor_{section_key}",
+            disabled=is_locked,
+            help=lock_help
+        )
+        if edited_prompt != default_text:
+            update_section_prompt(user_id, section_key, edited_prompt)
+
 st.markdown("---")
 
 
@@ -298,15 +347,12 @@ if "selected_style" not in st.session_state or st.session_state.selected_style n
 for i, style_name in enumerate(style_options):
     with style_cols[i]:
         is_selected = st.session_state.selected_style == style_name
-        border_color = "#7b2ff7" if is_selected else "rgba(255,255,255,0.08)"
-        bg = "rgba(123,47,247,0.1)" if is_selected else "rgba(255,255,255,0.02)"
+        card_class = "rf-style-card selected" if is_selected else "rf-style-card"
 
         st.markdown(
-            f"<div style='border:2px solid {border_color}; background:{bg}; "
-            f"border-radius:12px; padding:16px; text-align:center; min-height:80px;'>"
-            f"<div style='font-size:1.1rem; font-weight:700; color:#e0e0ff;'>"
-            f"{style_name}</div>"
-            f"<div style='font-size:0.8rem; color:#888; margin-top:6px;'>"
+            f"<div class='{card_class}'>"
+            f"<div class='rf-style-name'>{style_name}</div>"
+            f"<div class='rf-style-desc'>"
             f"{'Clean & simple' if style_name == 'Minimal' else 'Traditional ATS-ready' if style_name == 'Corporate' else 'Contemporary look'}"
             f"</div></div>",
             unsafe_allow_html=True,
@@ -326,7 +372,7 @@ if preview_file:
                 pdf_data = base64.b64encode(f.read()).decode("utf-8")
             st.markdown(
                 f'<iframe src="data:application/pdf;base64,{pdf_data}" '
-                f'width="100%" height="500px" style="border:1px solid rgba(255,255,255,0.1); border-radius:8px;"></iframe>',
+                f'width="100%" height="500px" style="border:1px solid #E6E8EF; border-radius:8px;"></iframe>',
                 unsafe_allow_html=True,
             )
 
@@ -411,11 +457,12 @@ if st.session_state.get("generate_trigger"):
                 jd_text=jd_text,
                 generation_model=cfg.GENERATION_MODELS[gen_model_label],
                 embedding_model=cfg.EMBEDDING_MODELS[emb_model_label],
-                style=cfg.RESUME_TEMPLATES[selected_style],
+                style=cfg.RESUME_TEMPLATES.get(selected_style, selected_style),
                 custom_prompt=final_custom_prompt,
                 retrieval_k=retrieval_k,
                 contact_details=contact_details,
                 doc_type=st.session_state.doc_type,
+                attachments=st.session_state.get("selected_attachments", []) if st.session_state.doc_type == "cv" else []
             )
             
             increment_resume_count(user_id)
@@ -461,35 +508,33 @@ if st.session_state.gap_analysis:
     st.markdown("## JD Gap Analysis")
 
     # Score metric
-    score_color = "#00c853" if gap.match_percentage >= 70 else "#ffab00" if gap.match_percentage >= 40 else "#ff6b6b"
+    score_color = "#16A34A" if gap.match_percentage >= 70 else "#B45309" if gap.match_percentage >= 40 else "#DC2626"
     st.markdown(
-        f"<div style='text-align:center; padding:20px; background:rgba(255,255,255,0.03); border-radius:12px; margin-bottom:16px;'>"
-        f"<div style='font-size:0.9rem; color:#888;'>Overall Match</div>"
-        f"<div style='font-size:2.5rem; font-weight:800; color:{score_color};'>{gap.match_percentage:.0f}%</div>"
+        f"<div class='rf-score-card'>"
+        f"<div class='rf-score-label'>Overall Match</div>"
+        f"<div class='rf-score-value' style='color:{score_color};'>{gap.match_percentage:.0f}%</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### ✅ Matching Skills")
+    st.markdown("#### Matching Skills")
     if gap.matching_skills:
-        cols = st.columns(2)
-        for i, skill in enumerate(gap.matching_skills):
-            cols[i % 2].markdown(f"✅ **{skill}**")
+        pills = "".join(f"<span class='rf-pill rf-pill-green' style='margin:0 6px 8px 0;'>{skill}</span>" for skill in gap.matching_skills)
+        st.markdown(f"<div style='line-height:2.2;'>{pills}</div>", unsafe_allow_html=True)
     else:
         st.caption("None found")
-        
-    st.markdown("#### ❌ Missing Skills")
+
+    st.markdown("#### Missing Skills")
     if gap.missing_skills:
-        cols = st.columns(2)
-        for i, skill in enumerate(gap.missing_skills):
-            cols[i % 2].markdown(f"❌ **{skill}**")
+        pills = "".join(f"<span class='rf-pill rf-pill-red' style='margin:0 6px 8px 0;'>{skill}</span>" for skill in gap.missing_skills)
+        st.markdown(f"<div style='line-height:2.2;'>{pills}</div>", unsafe_allow_html=True)
     else:
         st.caption("No gaps!")
-        
-    st.markdown("#### 💡 Recommendations")
+
+    st.markdown("#### Recommendations")
     if gap.recommendations:
         for rec in gap.recommendations:
-            st.info(f"💡 {rec}")
+            st.info(rec)
     else:
         st.caption("No recommendations")
         
@@ -526,19 +571,85 @@ if st.session_state.generated_resume:
     else:
         st.markdown("## Generated Resume")
 
+    # ─── Flow Options: Continue or Generate New ──────────────────────────────
+    st.markdown("### Actions & Refinements")
+    
+    col_flow_new, col_flow_refine = st.columns(2)
+    
+    with col_flow_new:
+        st.markdown("**Start Over**")
+        st.caption("Clears all history, job role, job description, and generated resume to start a completely new generation.")
+        if st.button("Generate Completely New Resume", use_container_width=True, type="secondary", key="flow_gen_new"):
+            # Clean history and inputs
+            for key in ["generated_resume", "retrieved_chunks", "generation_metadata",
+                        "gap_analysis", "ats_score", "jd_for_analysis", "last_injected_skills"]:
+                st.session_state[key] = None
+            st.session_state.is_locked = False
+            
+            # Reset widgets in session state
+            st.session_state.job_role_input = ""
+            st.session_state.jd_input_widget = ""
+            st.session_state.jd_input_text = ""
+            st.session_state.custom_prompt = ""
+            st.session_state.resume_paste = ""
+            st.session_state.resume_up = None
+            if "selected_attachments" in st.session_state:
+                st.session_state.selected_attachments = []
+            if "ordered_attachments" in st.session_state:
+                st.session_state.ordered_attachments = []
+                
+            st.rerun()
+            
+    with col_flow_refine:
+        st.markdown("**Refine with AI (Continue)**")
+        st.caption("Keep current inputs and instruct the AI to make specific adjustments or corrections to the generated resume.")
+        
+        with st.form("refine_form", clear_on_submit=True):
+            refine_prompt = st.text_area(
+                "Describe the adjustments you want:",
+                placeholder="E.g., 'Make the summary section sound more formal' or 'Add SQL and Python to the skills section'...",
+                height=70,
+                key="flow_refine_input"
+            )
+            submit_refine = st.form_submit_button("Apply Refinements", use_container_width=True)
+            
+            if submit_refine:
+                if not refine_prompt.strip():
+                    st.error("Please specify what adjustments you want.")
+                else:
+                    with st.spinner("Applying refinements..."):
+                        from backend.generator import refine_resume
+                        try:
+                            gen_m = st.session_state.get("gen_m", list(cfg.GENERATION_MODELS.keys())[0])
+                            model = cfg.GENERATION_MODELS[gen_m]
+                            
+                            updated_resume = refine_resume(
+                                current_resume_text=resume_text,
+                                refinement_prompt=refine_prompt,
+                                jd_text=st.session_state.jd_for_analysis,
+                                generation_model=model
+                            )
+                            st.session_state.generated_resume = updated_resume
+                            st.toast("Resume refined successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Refinement failed: {e}")
+
+    st.markdown("---")
+
     # Enhanced Generation Feedback
     if st.session_state.get("last_injected_skills"):
-        st.markdown("### 🚀 Enhanced Generation Feedback")
+        st.markdown("### Enhanced Generation Feedback")
         info_col, rec_col = st.columns(2)
         with info_col:
             st.success("**Newly Added Skills (Injected):**")
-            for skill in st.session_state.last_injected_skills:
-                st.markdown(f"✨ {skill}")
+            pills = "".join(f"<span class='rf-pill rf-pill-accent' style='margin:0 6px 8px 0;'>{skill}</span>" for skill in st.session_state.last_injected_skills)
+            st.markdown(f"<div style='line-height:2.2;'>{pills}</div>", unsafe_allow_html=True)
         with rec_col:
             if st.session_state.gap_analysis and st.session_state.gap_analysis.recommendations:
                 st.warning("**What You Should Learn:**")
                 for rec in st.session_state.gap_analysis.recommendations:
-                    st.markdown(f"📚 {rec}")
+                    st.markdown(f"- {rec}")
 
     # Preview / Edit tabs
     preview_tab, edit_tab = st.tabs(["Preview", "Edit"])
@@ -567,7 +678,7 @@ if st.session_state.generated_resume:
 
     with dl1:
         try:
-            attachments = st.session_state.get("selected_attachments", [])
+            attachments = st.session_state.get("selected_attachments", []) if st.session_state.doc_type == "cv" else []
             docx_bytes = export_to_docx(resume_text, attachments)
             st.download_button("DOCX", docx_bytes, "document.docx",
                              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -577,7 +688,7 @@ if st.session_state.generated_resume:
 
     with dl2:
         try:
-            attachments = st.session_state.get("selected_attachments", [])
+            attachments = st.session_state.get("selected_attachments", []) if st.session_state.doc_type == "cv" else []
             pdf_bytes = export_to_pdf(resume_text, attachments)
             st.download_button("PDF", pdf_bytes, "document.pdf",
                              "application/pdf", use_container_width=True, key="dl_pdf")
@@ -607,11 +718,11 @@ if st.session_state.generated_resume:
         st.markdown("---")
         st.markdown("### ATS Match Score")
 
-        ats_color = "#00c853" if ats.overall_score >= 70 else "#ffab00" if ats.overall_score >= 50 else "#ff6b6b"
+        ats_color = "#16A34A" if ats.overall_score >= 70 else "#B45309" if ats.overall_score >= 50 else "#DC2626"
         st.markdown(
-            f"<div style='text-align:center; padding:20px; background:rgba(255,255,255,0.03); border-radius:12px; margin-bottom:16px;'>"
-            f"<div style='font-size:0.9rem; color:#888;'>Overall ATS Score</div>"
-            f"<div style='font-size:2.5rem; font-weight:800; color:{ats_color};'>{ats.overall_score:.0f}%</div>"
+            f"<div class='rf-score-card'>"
+            f"<div class='rf-score-label'>Overall ATS Score</div>"
+            f"<div class='rf-score-value' style='color:{ats_color};'>{ats.overall_score:.0f}%</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -637,15 +748,15 @@ if st.session_state.generated_resume:
     if st.session_state.retrieved_chunks:
         with st.expander(f"Retrieved Chunks ({len(st.session_state.retrieved_chunks)})"):
             for chunk in st.session_state.retrieved_chunks:
-                score_color = "#00c853" if chunk["score"] > 0.5 else "#ffab00" if chunk["score"] > 0.3 else "#ff6b6b"
+                pill_class = "rf-pill-green" if chunk["score"] > 0.5 else "rf-pill-amber" if chunk["score"] > 0.3 else "rf-pill-red"
                 st.markdown(
-                    f"**#{chunk['rank']}** | `{chunk['doc_type']}` | "
-                    f"<span style='color:{score_color}'>Score: {chunk['score']}</span>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"<div style='background:rgba(255,255,255,0.03); padding:10px; "
-                    f"border-radius:8px; font-size:0.85rem; color:#b0b0d0; margin-bottom:10px;'>"
-                    f"{chunk['preview']}</div>",
+                    f"<div class='rf-chunk'>"
+                    f"<div class='rf-chunk-head'>"
+                    f"<span class='rf-chunk-rank'>#{chunk['rank']}</span>"
+                    f"<span class='rf-pill'>{chunk['doc_type']}</span>"
+                    f"<span class='rf-pill {pill_class}'>Score: {chunk['score']}</span>"
+                    f"</div>"
+                    f"<div class='rf-chunk-body'>{chunk['preview']}</div>"
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
